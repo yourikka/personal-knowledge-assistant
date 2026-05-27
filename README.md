@@ -1,0 +1,174 @@
+# 个人知识库智能整理助手
+
+这是一个面向个人知识管理的多 Agent MVP。它把网页、PDF、Markdown、图片和纯文本统一接入入库流水线，自动完成解析、清洗、分类、摘要、关联和问答，并额外支持生图 Agent。
+
+## 一句话做什么
+
+你平时收藏的网页、PDF、笔记、图片自动入库，按主题分类、摘要、打标签、建立关联，支持自然语言检索和问答。
+
+## 当前实现范围
+
+- 入库主链路使用 `LangGraph StateGraph` 编排：采集、解析、清洗、分类打标、摘要、持久化、知识关联
+- 检索问答和生图作为独立 Agent 能力接入 API 层
+- `SQLite` 落元数据、原文、摘要、标签、关联关系、会话历史
+- `Chroma` 可选接入；未安装或未启用时，自动回退到本地哈希向量检索
+- 网页采集优先走 `urllib + BeautifulSoup`，可选启用 `Playwright`
+- 图片 OCR 优先走 `pytesseract`，本机未安装 Tesseract 时自动降级
+- PDF 优先走 `PyPDF2`，不可用时回退为文本解码
+- 分类、摘要、问答 Agent 默认优先调用 `gpt-5.4`
+- 生图 Agent 默认调用 `gpt-image-2`
+- 支持第三方 OpenAI 兼容 API，只需要提供兼容的 `base_url + api_key`
+
+## 项目结构
+
+- `app/main.py`：FastAPI 入口
+- `app/config.py`：环境配置
+- `app/db.py`：SQLite 仓储
+- `app/models.py`：请求、响应和流水线状态模型
+- `app/pipeline/orchestrator.py`：LangGraph 编排器
+- `app/pipeline/agents/`：各 Agent 实现
+- `app/services/parser_utils.py`：网页、PDF、Markdown、图片解析
+- `app/services/text_utils.py`：文本清洗、标签、摘要、向量工具
+- `app/services/vector_store.py`：Chroma / 本地向量检索适配
+
+## 运行方式
+
+1. 创建虚拟环境并安装依赖
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2. 复制环境变量
+
+```bash
+cp .env.example .env
+```
+
+3. 启动服务
+
+```bash
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
+```
+
+## 主要接口
+
+### 健康检查
+
+```bash
+curl http://127.0.0.1:8010/health
+```
+
+### 文档入库
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/knowledge/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_type": "markdown",
+    "source": "# LangGraph\n\nLangGraph 适合做多节点 Agent 编排。",
+    "title": "LangGraph 笔记"
+  }'
+```
+
+### 文件上传入库
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/knowledge/upload \
+  -F "file=@/absolute/path/to/note.md" \
+  -F "source_type=markdown" \
+  -F "title=我的笔记"
+```
+
+### 问答检索
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/knowledge/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "我收藏的内容里哪些和 Agent 编排有关？",
+    "top_k": 3,
+    "session_id": "demo-session"
+  }'
+```
+
+### 生图
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/images/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "一个极简的个人知识库控制台界面插画，强调多 Agent 流水线和知识网络",
+    "size": "1024x1024",
+    "quality": "high"
+  }'
+```
+
+## Agent 对应职责
+
+1. 数据采集 Agent：读取 URL、本地文件或内联文本，做黑名单校验和去重。
+2. 格式解析 Agent：按 HTML、PDF、Markdown、图片等格式提纯文本并提取元数据。
+3. 内容清洗 Agent：去脚本、去广告噪声、修正常见乱码、统一空白格式。
+4. 分类打标 Agent：按技术、生活、学习三大主题分类，并产出 3 到 5 个标签。
+5. 摘要提取 Agent：抽取核心句，生成 100 到 200 字摘要。
+6. 知识关联 Agent：计算相似度，建立双向链接。
+7. 检索问答 Agent：支持自然语言检索，返回摘要、引用文档和来源。
+8. 生图 Agent：按知识主题或检索结果生成配图、封面或概念图。
+
+## LangGraph 编排
+
+入库主链路不是手写顺序调用，而是 `StateGraph`：
+
+```text
+agent_acquisition
+  ├─ duplicate -> END
+  └─ parse -> agent_parser -> agent_cleaning -> agent_classification -> agent_summary -> persist -> agent_linking -> END
+```
+
+节点之间传递 `PipelineState`，重复文档会在采集节点后通过条件边直接结束，不会重复解析、摘要或写库。
+
+## 设计说明
+
+- 这是一个可运行 MVP，不是最终生产版。
+- 当前已接 OpenAI，分类、摘要、问答 Agent 优先使用 `gpt-5.4`；未配置 `OPENAI_API_KEY` 时自动回退本地规则。
+- 生图 Agent 使用 `gpt-image-2`；未配置 `OPENAI_API_KEY` 时会返回可解释的空结果而不是直接崩溃。
+- 基础版 Agent 已补充运行统计、来源元数据、清洗前后统计和知识关联图谱结构。
+
+## 当前已完成能力说明
+
+- URL、Markdown、纯文本、本地 PDF、本地图片五类入口已经打通
+- 支持直接上传文件走入库流程
+- 支持查询文档列表、文档详情、关联结果和自然语言问答
+- 支持调用生图 Agent 生成知识库封面图或概念图
+- 支持会话历史写入 SQLite，便于后续做多轮上下文增强
+- OCR、Playwright、Chroma 都是可选能力，不会阻塞基础功能启动
+- 支持 `python scripts/smoke_test.py` 做基础回归测试
+
+## OpenAI 配置
+
+在 `.env` 里至少补齐：
+
+```env
+OPENAI_API_KEY=你的key
+OPENAI_BASE_URL=https://你的第三方兼容接口/v1
+OPENAI_TEXT_MODEL=gpt-5.4
+OPENAI_IMAGE_MODEL=gpt-image-2
+OPENAI_TEXT_TIMEOUT_SECONDS=60
+OPENAI_IMAGE_TIMEOUT_SECONDS=180
+OPENAI_CHAT_COMPLETIONS_PATH=/chat/completions
+OPENAI_IMAGE_GENERATIONS_PATH=/images/generations
+```
+
+说明：
+
+- 文本类 Agent 统一走 `gpt-5.4`
+- 生图 Agent 走 `gpt-image-2`
+- 当前实现走的是 OpenAI 兼容 HTTP 接口：`/chat/completions` 和 `/images/generations`
+- 也就是说你用第三方 API 时，不需要额外安装 OpenAI 官方 SDK
+- 生图通常比文本慢得多，所以单独提供了 `OPENAI_IMAGE_TIMEOUT_SECONDS`
+- 如果第三方平台路径不是标准 OpenAI 路径，可以改：
+  - `OPENAI_CHAT_COMPLETIONS_PATH`
+  - `OPENAI_IMAGE_GENERATIONS_PATH`
+- 如果你强行写成 `gpt5.4` 或 `image2`，那不是标准模型 ID，请求会失败
