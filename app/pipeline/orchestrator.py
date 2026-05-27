@@ -5,6 +5,7 @@ from app.db import KnowledgeRepository
 from app.models import IngestRequest, PipelineState
 from app.pipeline.agents.acquisition_agent import AcquisitionAgent
 from app.pipeline.agents.cleaning_agent import CleaningAgent
+from app.pipeline.agents.chunking_agent import ChunkingAgent
 from app.pipeline.agents.classification_agent import ClassificationAgent
 from app.pipeline.agents.linking_agent import LinkingAgent
 from app.pipeline.agents.parser_agent import ParserAgent
@@ -12,6 +13,8 @@ from app.pipeline.agents.query_agent import QueryAgent
 from app.pipeline.agents.summary_agent import SummaryAgent
 from app.pipeline.agents.image_generation_agent import ImageGenerationAgent
 from app.services.openai_client import OpenAIService
+from app.services.rag_service import RAGService
+from app.services.chunking import DocumentChunker
 from app.services.vector_store import VectorStore
 
 from langgraph.graph import END, StateGraph
@@ -25,21 +28,46 @@ class KnowledgePipeline:
         self.acquisition = AcquisitionAgent(settings, repo)
         self.parser = ParserAgent()
         self.cleaning = CleaningAgent()
+        self.chunking = ChunkingAgent(settings)
+        self.chunker = DocumentChunker(
+            target_chars=settings.chunk_target_chars,
+            overlap_chars=settings.chunk_overlap_chars,
+            min_chars=settings.chunk_min_chars,
+            max_chars=settings.chunk_max_chars,
+        )
         self.classification = ClassificationAgent(self.openai_service)
         self.summary = SummaryAgent(self.openai_service)
-        self.linking = LinkingAgent(settings, repo, vector_store)
-        self.query_agent = QueryAgent(settings, repo, vector_store, self.openai_service)
+        self.rag_service = RAGService(settings, repo, vector_store, self.openai_service)
+        self.linking = LinkingAgent(settings, repo, vector_store, self.rag_service)
+        self.query_agent = QueryAgent(settings, repo, vector_store, self.openai_service, self.rag_service)
         self.image_generation_agent = ImageGenerationAgent(settings, self.openai_service)
         self.ingest_graph = self._build_ingest_graph()
+        self.bootstrap()
 
     def bootstrap(self) -> None:
         self.vector_store.reset()
         for document in self.repo.iter_documents():
+            chunks = self.repo.list_document_chunks(document["id"])
+            if not chunks:
+                chunks = self.chunker.chunk(document_id=document["id"], text=document["cleaned_text"])
+                self.repo.replace_document_chunks(document["id"], chunks)
+
             self.vector_store.add_document(
                 document_id=document["id"],
                 text=document["cleaned_text"],
                 metadata={"title": document["title"], "category": document["category"]},
             )
+            for chunk in chunks:
+                self.vector_store.add_chunk(
+                    chunk_id=chunk["id"],
+                    text=chunk["text"],
+                    metadata={
+                        "document_id": document["id"],
+                        "chunk_index": chunk["chunk_index"],
+                        "title": document["title"],
+                        "category": document["category"],
+                    },
+                )
 
     def ingest(self, request: IngestRequest) -> dict:
         state = self._coerce_state(self.ingest_graph.invoke(PipelineState(request=request)))
@@ -75,19 +103,21 @@ class KnowledgePipeline:
         self.bootstrap()
         rebuilt = 0
         for document in self.repo.iter_documents():
-            results = self.linking.vector_store.search(
-                query=document["cleaned_text"],
-                top_k=self.linking.settings.related_top_k + 1,
+            retrieval = self.rag_service.retrieve(
+                query=f"{document['title']}\n{document['summary']}\n{' '.join(document['tags'])}\n{document['cleaned_text'][:2000]}",
+                top_k=self.linking.settings.related_top_k,
                 exclude_ids={document["id"]},
             )
+            grouped: dict[str, dict] = {}
+            for item in retrieval["references"]:
+                current = grouped.get(item["id"])
+                if current is None or item["score"] > current["score"]:
+                    grouped[item["id"]] = item
             related = []
-            for item in results:
+            for item in sorted(grouped.values(), key=lambda value: value["score"], reverse=True):
                 if item["score"] < self.linking.settings.related_score_threshold:
                     continue
-                target = self.repo.get_document(item["id"])
-                if not target:
-                    continue
-                related.append({"target_id": target["id"], "score": item["score"]})
+                related.append({"target_id": item["id"], "score": item["score"]})
             self.repo.replace_links(document["id"], related)
             rebuilt += len(related)
         return {"status": "ok", "documents": len(self.repo.iter_documents()), "links_rebuilt": rebuilt}
@@ -107,6 +137,7 @@ class KnowledgePipeline:
         graph.add_node("agent_acquisition", self.acquisition.run)
         graph.add_node("agent_parser", self.parser.run)
         graph.add_node("agent_cleaning", self.cleaning.run)
+        graph.add_node("agent_chunking", self.chunking.run)
         graph.add_node("agent_classification", self.classification.run)
         graph.add_node("agent_summary", self.summary.run)
         graph.add_node("persist", self._persist_document)
@@ -122,7 +153,8 @@ class KnowledgePipeline:
             },
         )
         graph.add_edge("agent_parser", "agent_cleaning")
-        graph.add_edge("agent_cleaning", "agent_classification")
+        graph.add_edge("agent_cleaning", "agent_chunking")
+        graph.add_edge("agent_chunking", "agent_classification")
         graph.add_edge("agent_classification", "agent_summary")
         graph.add_edge("agent_summary", "persist")
         graph.add_edge("persist", "agent_linking")
@@ -151,5 +183,6 @@ class KnowledgePipeline:
                 "metadata": state.metadata,
             }
         )
-        state.logs.append("persist: 已写入 SQLite 元数据仓库。")
+        self.repo.replace_document_chunks(state.document_id, state.chunks)
+        state.logs.append(f"persist: 已写入 SQLite 元数据仓库和 {len(state.chunks)} 个 chunk。")
         return state

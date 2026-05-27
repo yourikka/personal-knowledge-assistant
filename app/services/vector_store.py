@@ -23,18 +23,26 @@ class VectorStore:
             client = chromadb.PersistentClient(path=chroma_dir)
             self.collection = client.get_or_create_collection(name="knowledge_documents")
 
-    def add_document(self, document_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
+    def add_text(self, item_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
         embedding = make_hash_embedding(text)
-        self.local_embeddings[document_id] = embedding
-        self.local_texts[document_id] = text
+        self.local_embeddings[item_id] = embedding
+        self.local_texts[item_id] = text
 
         if self.collection is not None:
             self.collection.upsert(
-                ids=[document_id],
+                ids=[item_id],
                 documents=[text],
                 metadatas=[metadata or {}],
                 embeddings=[embedding],
             )
+
+    def add_document(self, document_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
+        payload = {"kind": "document", **(metadata or {})}
+        self.add_text(document_id, text, payload)
+
+    def add_chunk(self, chunk_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
+        payload = {"kind": "chunk", **(metadata or {})}
+        self.add_text(chunk_id, text, payload)
 
     def reset(self) -> None:
         self.local_embeddings = {}
@@ -57,10 +65,11 @@ class VectorStore:
         if self.collection is None:
             return local_ranked[:top_k]
 
+        n_results = min(max(top_k * 2, 6), max(1, len(self.local_embeddings)))
         chroma_ranked: dict[str, float] = {item["id"]: item["score"] for item in local_ranked}
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=max(top_k * 2, 6),
+            n_results=n_results,
         )
         ids = results.get("ids", [[]])[0]
         distances = results.get("distances", [[]])[0]
@@ -73,3 +82,8 @@ class VectorStore:
         merged = [{"id": doc_id, "score": score} for doc_id, score in chroma_ranked.items() if score > 0]
         merged.sort(key=lambda item: item["score"], reverse=True)
         return merged[:top_k]
+
+    def similarity(self, left_text: str, right_text: str) -> float:
+        vector_score = cosine_similarity(make_hash_embedding(left_text), make_hash_embedding(right_text))
+        lexical_score = overlap_score(left_text, right_text)
+        return round(vector_score * 0.7 + lexical_score * 0.3, 4)

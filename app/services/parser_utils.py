@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from .text_utils import normalize_whitespace
+from .text_utils import normalize_document_text
 
 try:
     from bs4 import BeautifulSoup
@@ -132,7 +132,7 @@ def parse_content(source_type: str, raw_bytes: bytes, metadata: dict[str, Any]) 
     extra["parsed_chars"] = len(text)
     extra["parser"] = source_type
     merged_metadata = {**metadata, **extra}
-    return normalize_whitespace(text), merged_metadata
+    return normalize_document_text(text), merged_metadata
 
 
 def parse_html(raw_bytes: bytes) -> str:
@@ -154,8 +154,16 @@ def parse_markdown(raw_bytes: bytes) -> str:
     text = re.sub(r"`{1,3}.*?`{1,3}", " ", text, flags=re.DOTALL)
     text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    text = re.sub(r"^[#>\-\*\d\.\s]+", "", text, flags=re.MULTILINE)
-    return text
+    lines = []
+    for line in text.splitlines():
+        if re.match(r"^\s{0,3}#{1,6}\s+", line):
+            lines.append(line.strip())
+            continue
+        line = re.sub(r"^\s{0,3}>\s?", "", line)
+        line = re.sub(r"^\s{0,3}[-*+]\s+", "", line)
+        line = re.sub(r"^\s{0,3}\d+[.)]\s+", "", line)
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def parse_plain_text(raw_bytes: bytes) -> str:

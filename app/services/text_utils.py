@@ -55,6 +55,14 @@ def normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def normalize_document_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"[ \t\f\v]+", " ", normalized)
+    normalized = re.sub(r" *\n *", "\n", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
 def fix_mojibake(text: str) -> str:
     repaired = text.replace("\u00a0", " ").replace("\ufeff", "")
     repaired = repaired.replace("â€”", "-").replace("â€œ", '"').replace("â€\x9d", '"')
@@ -68,7 +76,7 @@ def remove_noise(text: str) -> str:
     cleaned = re.sub(r"https?://\S+", " ", cleaned)
     cleaned = re.sub(r"(?i)(cookie|subscribe|newsletter|sign up|all rights reserved)", " ", cleaned)
     cleaned = re.sub(r"(上一篇|下一篇|相关阅读|推荐阅读)", " ", cleaned)
-    return normalize_whitespace(cleaned)
+    return normalize_document_text(cleaned)
 
 
 def text_stats(text: str) -> dict[str, int]:

@@ -57,6 +57,18 @@ class KnowledgeRepository:
                     PRIMARY KEY (source_id, target_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS document_chunks (
+                    id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    char_start INTEGER NOT NULL,
+                    char_end INTEGER NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS chat_turns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -66,6 +78,7 @@ class KnowledgeRepository:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id, chunk_index);
                 CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id ON chat_turns(session_id, id DESC);
                 """
             )
@@ -124,6 +137,122 @@ class KnowledgeRepository:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM documents ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_document(row) for row in rows]
+
+    def search_documents_keyword(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        terms = [term.strip().lower() for term in query.split() if term.strip()]
+        if not terms:
+            return []
+
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        with self.connect() as conn:
+            for term in terms:
+                like = f"%{term}%"
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM documents
+                    WHERE lower(title) LIKE ?
+                       OR lower(summary) LIKE ?
+                       OR lower(cleaned_text) LIKE ?
+                       OR lower(tags_json) LIKE ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (like, like, like, like, limit),
+                ).fetchall()
+                for row in rows:
+                    rows_by_id[row["id"]] = self._row_to_document(row)
+
+        return list(rows_by_id.values())[:limit]
+
+    def replace_document_chunks(self, document_id: str, chunks: list[dict[str, Any]]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
+            for chunk in chunks:
+                conn.execute(
+                    """
+                    INSERT INTO document_chunks(
+                        id, document_id, chunk_index, text, char_start, char_end, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        chunk["id"],
+                        document_id,
+                        int(chunk["chunk_index"]),
+                        chunk["text"],
+                        int(chunk["char_start"]),
+                        int(chunk["char_end"]),
+                        json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
+                        now,
+                    ),
+                )
+
+    def list_document_chunks(self, document_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM document_chunks
+                WHERE document_id = ?
+                ORDER BY chunk_index ASC
+                """,
+                (document_id,),
+            ).fetchall()
+        return [self._row_to_chunk(row) for row in rows]
+
+    def get_chunk(self, chunk_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM document_chunks WHERE id = ?", (chunk_id,)).fetchone()
+        return self._row_to_chunk(row) if row else None
+
+    def iter_chunks(self, exclude_document_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM document_chunks"
+        params: tuple[Any, ...] = ()
+        if exclude_document_id:
+            query += " WHERE document_id != ?"
+            params = (exclude_document_id,)
+        query += " ORDER BY document_id, chunk_index ASC"
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_chunk(row) for row in rows]
+
+    def search_chunks_keyword(
+        self,
+        query: str,
+        limit: int = 20,
+        exclude_document_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        terms = [term.strip().lower() for term in query.split() if term.strip()]
+        if not terms:
+            return []
+
+        exclude_document_ids = exclude_document_ids or set()
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        with self.connect() as conn:
+            for term in terms:
+                like = f"%{term}%"
+                rows = conn.execute(
+                    """
+                    SELECT c.*
+                    FROM document_chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    WHERE lower(c.text) LIKE ?
+                       OR lower(d.title) LIKE ?
+                       OR lower(d.summary) LIKE ?
+                       OR lower(d.tags_json) LIKE ?
+                    ORDER BY d.created_at DESC, c.chunk_index ASC
+                    LIMIT ?
+                    """,
+                    (like, like, like, like, limit),
+                ).fetchall()
+                for row in rows:
+                    if row["document_id"] in exclude_document_ids:
+                        continue
+                    rows_by_id[row["id"]] = self._row_to_chunk(row)
+
+        return list(rows_by_id.values())[:limit]
 
     def iter_documents(self, exclude_id: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM documents"
@@ -212,3 +341,14 @@ class KnowledgeRepository:
             "updated_at": row["updated_at"],
         }
 
+    def _row_to_chunk(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "document_id": row["document_id"],
+            "chunk_index": row["chunk_index"],
+            "text": row["text"],
+            "char_start": row["char_start"],
+            "char_end": row["char_end"],
+            "metadata": json.loads(row["metadata_json"]),
+            "created_at": row["created_at"],
+        }

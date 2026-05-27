@@ -8,9 +8,9 @@
 
 ## 当前实现范围
 
-- 入库主链路使用 `LangGraph StateGraph` 编排：采集、解析、清洗、分类打标、摘要、持久化、知识关联
+- 入库主链路使用 `LangGraph StateGraph` 编排：采集、解析、清洗、切块、分类打标、摘要、持久化、知识关联
 - 检索问答和生图作为独立 Agent 能力接入 API 层
-- `SQLite` 落元数据、原文、摘要、标签、关联关系、会话历史
+- `SQLite` 落元数据、原文、摘要、标签、chunk、关联关系、会话历史
 - `Chroma` 可选接入；未安装或未启用时，自动回退到本地哈希向量检索
 - 网页采集优先走 `urllib + BeautifulSoup`，可选启用 `Playwright`
 - 图片 OCR 优先走 `pytesseract`，本机未安装 Tesseract 时自动降级
@@ -18,6 +18,7 @@
 - 分类、摘要、问答 Agent 默认优先调用 `gpt-5.4`
 - 生图 Agent 默认调用 `gpt-image-2`
 - 支持第三方 OpenAI 兼容 API，只需要提供兼容的 `base_url + api_key`
+- 检索问答使用 chunk 级增强 RAG：高质量切块、查询改写、多路召回、重排、MMR 去冗余、上下文压缩、引用回答
 
 ## 项目结构
 
@@ -28,6 +29,7 @@
 - `app/pipeline/orchestrator.py`：LangGraph 编排器
 - `app/pipeline/agents/`：各 Agent 实现
 - `app/services/parser_utils.py`：网页、PDF、Markdown、图片解析
+- `app/services/chunking.py`：文档切块策略，保留标题路径、字符范围和 overlap
 - `app/services/text_utils.py`：文本清洗、标签、摘要、向量工具
 - `app/services/vector_store.py`：Chroma / 本地向量检索适配
 
@@ -111,11 +113,12 @@ curl -X POST http://127.0.0.1:8010/api/images/generate \
 1. 数据采集 Agent：读取 URL、本地文件或内联文本，做黑名单校验和去重。
 2. 格式解析 Agent：按 HTML、PDF、Markdown、图片等格式提纯文本并提取元数据。
 3. 内容清洗 Agent：去脚本、去广告噪声、修正常见乱码、统一空白格式。
-4. 分类打标 Agent：按技术、生活、学习三大主题分类，并产出 3 到 5 个标签。
-5. 摘要提取 Agent：抽取核心句，生成 100 到 200 字摘要。
-6. 知识关联 Agent：计算相似度，建立双向链接。
-7. 检索问答 Agent：支持自然语言检索，返回摘要、引用文档和来源。
-8. 生图 Agent：按知识主题或检索结果生成配图、封面或概念图。
+4. 文章切块 Agent：按标题、段落、句子边界生成 chunk，保存字符范围和标题路径。
+5. 分类打标 Agent：按技术、生活、学习三大主题分类，并产出 3 到 5 个标签。
+6. 摘要提取 Agent：抽取核心句，生成 100 到 200 字摘要。
+7. 知识关联 Agent：计算相似度，建立双向链接。
+8. 检索问答 Agent：支持自然语言检索，返回摘要、chunk 引用和来源。
+9. 生图 Agent：按知识主题或检索结果生成配图、封面或概念图。
 
 ## LangGraph 编排
 
@@ -124,10 +127,24 @@ curl -X POST http://127.0.0.1:8010/api/images/generate \
 ```text
 agent_acquisition
   ├─ duplicate -> END
-  └─ parse -> agent_parser -> agent_cleaning -> agent_classification -> agent_summary -> persist -> agent_linking -> END
+  └─ parse -> agent_parser -> agent_cleaning -> agent_chunking -> agent_classification -> agent_summary -> persist -> agent_linking -> END
 ```
 
 节点之间传递 `PipelineState`，重复文档会在采集节点后通过条件边直接结束，不会重复解析、摘要或写库。
+
+## RAG 策略
+
+在线问答和离线知识关联共用同一套 chunk 级 `RAGService`：
+
+- 高质量切块：优先保留 Markdown 标题路径、段落和句子边界，超长内容用带 overlap 的滑窗兜底。
+- 查询改写：结合会话历史和关键词生成多个检索表达。
+- 多路召回：以 chunk 为候选，同时使用向量召回、关键词召回、标签和摘要信号。
+- 混合重排：综合语义分、词项重叠、召回信号、标签命中和新近度。
+- MMR 选择：减少重复 chunk，优先保留互补信息。
+- 上下文压缩：按字符预算组装标题、来源、分类、标签、摘要、标题路径和 chunk 原文。
+- 引用回答：问答 Agent 要求模型只基于上下文回答，并使用 `[1]`、`[2]` 引用来源；接口引用会返回 `chunk_id`、`chunk_index`、`char_start`、`char_end`。
+
+`LinkingAgent` 也复用这套 RAG 召回结果来建立双向链接，关联边会保留召回信号，便于后续做图谱展示和排障。
 
 ## 设计说明
 
@@ -159,6 +176,15 @@ OPENAI_TEXT_TIMEOUT_SECONDS=60
 OPENAI_IMAGE_TIMEOUT_SECONDS=180
 OPENAI_CHAT_COMPLETIONS_PATH=/chat/completions
 OPENAI_IMAGE_GENERATIONS_PATH=/images/generations
+RAG_REWRITE_ENABLED=true
+RAG_MULTI_QUERY_LIMIT=4
+RAG_CANDIDATE_MULTIPLIER=5
+RAG_MMR_LAMBDA=0.72
+RAG_CONTEXT_CHAR_BUDGET=6000
+CHUNK_TARGET_CHARS=900
+CHUNK_OVERLAP_CHARS=160
+CHUNK_MIN_CHARS=180
+CHUNK_MAX_CHARS=1400
 ```
 
 说明：
