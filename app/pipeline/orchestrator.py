@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from app.config import Settings
+from app.db import KnowledgeRepository
+from app.models import IngestRequest, PipelineState
+from app.pipeline.agents.acquisition_agent import AcquisitionAgent
+from app.pipeline.agents.cleaning_agent import CleaningAgent
+from app.pipeline.agents.classification_agent import ClassificationAgent
+from app.pipeline.agents.linking_agent import LinkingAgent
+from app.pipeline.agents.parser_agent import ParserAgent
+from app.pipeline.agents.query_agent import QueryAgent
+from app.pipeline.agents.summary_agent import SummaryAgent
+from app.pipeline.agents.image_generation_agent import ImageGenerationAgent
+from app.services.openai_client import OpenAIService
+from app.services.vector_store import VectorStore
+
+from langgraph.graph import END, StateGraph
+
+
+class KnowledgePipeline:
+    def __init__(self, settings: Settings, repo: KnowledgeRepository, vector_store: VectorStore) -> None:
+        self.repo = repo
+        self.vector_store = vector_store
+        self.openai_service = OpenAIService(settings)
+        self.acquisition = AcquisitionAgent(settings, repo)
+        self.parser = ParserAgent()
+        self.cleaning = CleaningAgent()
+        self.classification = ClassificationAgent(self.openai_service)
+        self.summary = SummaryAgent(self.openai_service)
+        self.linking = LinkingAgent(settings, repo, vector_store)
+        self.query_agent = QueryAgent(settings, repo, vector_store, self.openai_service)
+        self.image_generation_agent = ImageGenerationAgent(settings, self.openai_service)
+        self.ingest_graph = self._build_ingest_graph()
+
+    def bootstrap(self) -> None:
+        self.vector_store.reset()
+        for document in self.repo.iter_documents():
+            self.vector_store.add_document(
+                document_id=document["id"],
+                text=document["cleaned_text"],
+                metadata={"title": document["title"], "category": document["category"]},
+            )
+
+    def ingest(self, request: IngestRequest) -> dict:
+        state = self._coerce_state(self.ingest_graph.invoke(PipelineState(request=request)))
+        if state.duplicate_of:
+            document = self.repo.get_document(state.duplicate_of)
+            return {
+                "document_id": document["id"],
+                "duplicate": True,
+                "title": document["title"],
+                "category": document["category"],
+                "tags": document["tags"],
+                "summary": document["summary"],
+                "related": self.repo.list_links(document["id"]),
+                "graph": {"nodes": [{"id": document["id"], "title": document["title"], "category": document["category"]}], "edges": []},
+                "logs": state.logs + ["orchestrator: 命中去重，直接返回已有文档。"],
+            }
+        return {
+            "document_id": state.document_id,
+            "duplicate": False,
+            "title": state.title,
+            "category": state.category,
+            "tags": state.tags,
+            "summary": state.summary,
+            "related": state.related,
+            "graph": state.graph,
+            "logs": state.logs + ["orchestrator: LangGraph 入库图执行完成。"],
+        }
+
+    def query(self, query: str, top_k: int, session_id: str | None = None) -> dict:
+        return self.query_agent.run(query=query, top_k=top_k, session_id=session_id)
+
+    def rebuild_links(self) -> dict:
+        self.bootstrap()
+        rebuilt = 0
+        for document in self.repo.iter_documents():
+            results = self.linking.vector_store.search(
+                query=document["cleaned_text"],
+                top_k=self.linking.settings.related_top_k + 1,
+                exclude_ids={document["id"]},
+            )
+            related = []
+            for item in results:
+                if item["score"] < self.linking.settings.related_score_threshold:
+                    continue
+                target = self.repo.get_document(item["id"])
+                if not target:
+                    continue
+                related.append({"target_id": target["id"], "score": item["score"]})
+            self.repo.replace_links(document["id"], related)
+            rebuilt += len(related)
+        return {"status": "ok", "documents": len(self.repo.iter_documents()), "links_rebuilt": rebuilt}
+
+    def generate_image(self, prompt: str, size: str, quality: str) -> dict:
+        return self.image_generation_agent.run(prompt=prompt, size=size, quality=quality)
+
+    def _coerce_state(self, value) -> PipelineState:
+        if isinstance(value, PipelineState):
+            return value
+        if isinstance(value, dict):
+            return PipelineState(**value)
+        return value
+
+    def _build_ingest_graph(self):
+        graph = StateGraph(PipelineState)
+        graph.add_node("agent_acquisition", self.acquisition.run)
+        graph.add_node("agent_parser", self.parser.run)
+        graph.add_node("agent_cleaning", self.cleaning.run)
+        graph.add_node("agent_classification", self.classification.run)
+        graph.add_node("agent_summary", self.summary.run)
+        graph.add_node("persist", self._persist_document)
+        graph.add_node("agent_linking", self.linking.run)
+
+        graph.set_entry_point("agent_acquisition")
+        graph.add_conditional_edges(
+            "agent_acquisition",
+            self._route_after_acquisition,
+            {
+                "duplicate": END,
+                "parse": "agent_parser",
+            },
+        )
+        graph.add_edge("agent_parser", "agent_cleaning")
+        graph.add_edge("agent_cleaning", "agent_classification")
+        graph.add_edge("agent_classification", "agent_summary")
+        graph.add_edge("agent_summary", "persist")
+        graph.add_edge("persist", "agent_linking")
+        graph.add_edge("agent_linking", END)
+        return graph.compile()
+
+    def _route_after_acquisition(self, state: PipelineState) -> str:
+        if state.duplicate_of:
+            return "duplicate"
+        return "parse"
+
+    def _persist_document(self, state: PipelineState) -> PipelineState:
+        self.repo.upsert_document(
+            {
+                "id": state.document_id,
+                "fingerprint": state.fingerprint,
+                "source_type": state.request.source_type,
+                "source_uri": state.source_uri,
+                "title": state.title,
+                "raw_text": state.parsed_text,
+                "cleaned_text": state.cleaned_text,
+                "summary": state.summary,
+                "category": state.category,
+                "confidence": state.confidence,
+                "tags": state.tags,
+                "metadata": state.metadata,
+            }
+        )
+        state.logs.append("persist: 已写入 SQLite 元数据仓库。")
+        return state
