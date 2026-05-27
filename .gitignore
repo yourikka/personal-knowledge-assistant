@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/knowledge.db
+data/chroma/
+data/generated-images/
