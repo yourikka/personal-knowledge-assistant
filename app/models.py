@@ -68,8 +68,26 @@ class IngestResponse(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     references: list[dict[str, Any]]
+    memories: list[dict[str, Any]] = Field(default_factory=list)
     session_id: str | None
     logs: list[str]
+
+
+class MemoryResponse(BaseModel):
+    id: str
+    session_id: str | None = None
+    kind: str
+    content: str
+    importance: float
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+
+class DeleteMemoryResponse(BaseModel):
+    status: str
+    memory_id: str
 
 
 class HealthResponse(BaseModel):

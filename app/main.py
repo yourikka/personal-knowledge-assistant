@@ -13,6 +13,7 @@ from .config import get_settings
 from .db import KnowledgeRepository
 from .models import (
     DeleteDocumentResponse,
+    DeleteMemoryResponse,
     DocumentChunkResponse,
     DocumentDetailResponse,
     DocumentResponse,
@@ -21,17 +22,20 @@ from .models import (
     ImageGenerateResponse,
     IngestRequest,
     IngestResponse,
+    MemoryResponse,
     QueryRequest,
     QueryResponse,
     ReindexResponse,
 )
 from .pipeline.orchestrator import KnowledgePipeline
+from .services.embedding_service import EmbeddingService
 from .services.vector_store import VectorStore
 
 
 settings = get_settings()
 repo = KnowledgeRepository(settings.sqlite_path)
-vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma)
+embedding_service = EmbeddingService(settings)
+vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma, embedding_service)
 pipeline = KnowledgePipeline(settings, repo, vector_store)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -110,6 +114,20 @@ def query_knowledge(request: QueryRequest) -> QueryResponse:
         return QueryResponse(session_id=request.session_id, **result)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"检索失败：{error}") from error
+
+
+@app.get("/api/memories", response_model=list[MemoryResponse])
+def list_memories(session_id: str | None = None, limit: int = 20) -> list[MemoryResponse]:
+    memories = repo.list_memories(session_id=session_id, limit=limit)
+    return [MemoryResponse(**memory) for memory in memories]
+
+
+@app.delete("/api/memories/{memory_id}", response_model=DeleteMemoryResponse)
+def delete_memory(memory_id: str) -> DeleteMemoryResponse:
+    if not repo.delete_memory(memory_id):
+        raise HTTPException(status_code=404, detail="记忆不存在。")
+    vector_store.delete_ids([memory_id])
+    return DeleteMemoryResponse(status="ok", memory_id=memory_id)
 
 
 @app.get("/api/knowledge/documents", response_model=list[DocumentResponse])

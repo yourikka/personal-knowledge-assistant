@@ -78,9 +78,23 @@ class KnowledgeRepository:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS memory_records (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    kind TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    importance REAL NOT NULL,
+                    tags_json TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id, chunk_index);
                 CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id ON chat_turns(session_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_memory_records_session_id ON memory_records(session_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_memory_records_kind ON memory_records(kind, updated_at DESC);
                 """
             )
 
@@ -334,6 +348,146 @@ class KnowledgeRepository:
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def upsert_memory(self, record: dict[str, Any]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_records(
+                    id, session_id, kind, content, importance, tags_json, metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    kind = excluded.kind,
+                    content = excluded.content,
+                    importance = excluded.importance,
+                    tags_json = excluded.tags_json,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record["id"],
+                    record.get("session_id"),
+                    record["kind"],
+                    record["content"],
+                    float(record.get("importance", 0.5)),
+                    json.dumps(record.get("tags", []), ensure_ascii=False),
+                    json.dumps(record.get("metadata", {}), ensure_ascii=False),
+                    record.get("created_at", now),
+                    now,
+                ),
+            )
+
+    def get_memory(self, memory_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM memory_records WHERE id = ?", (memory_id,)).fetchone()
+        return self._row_to_memory(row) if row else None
+
+    def list_memories(
+        self,
+        session_id: str | None = None,
+        limit: int = 20,
+        include_global: bool = True,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if session_id and include_global:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM memory_records
+                    WHERE session_id = ? OR session_id IS NULL
+                    ORDER BY importance DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (session_id, limit),
+                ).fetchall()
+            elif session_id:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM memory_records
+                    WHERE session_id = ?
+                    ORDER BY importance DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (session_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM memory_records
+                    ORDER BY importance DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        return [self._row_to_memory(row) for row in rows]
+
+    def search_memories_keyword(
+        self,
+        query: str,
+        session_id: str | None = None,
+        limit: int = 20,
+        include_global: bool = True,
+    ) -> list[dict[str, Any]]:
+        terms = [term.strip().lower() for term in query.split() if term.strip()]
+        if not terms:
+            return []
+
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        with self.connect() as conn:
+            for term in terms:
+                like = f"%{term}%"
+                if session_id and include_global:
+                    rows = conn.execute(
+                        """
+                        SELECT *
+                        FROM memory_records
+                        WHERE (session_id = ? OR session_id IS NULL)
+                          AND (lower(content) LIKE ? OR lower(tags_json) LIKE ?)
+                        ORDER BY importance DESC, updated_at DESC
+                        LIMIT ?
+                        """,
+                        (session_id, like, like, limit),
+                    ).fetchall()
+                elif session_id:
+                    rows = conn.execute(
+                        """
+                        SELECT *
+                        FROM memory_records
+                        WHERE session_id = ?
+                          AND (lower(content) LIKE ? OR lower(tags_json) LIKE ?)
+                        ORDER BY importance DESC, updated_at DESC
+                        LIMIT ?
+                        """,
+                        (session_id, like, like, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT *
+                        FROM memory_records
+                        WHERE lower(content) LIKE ? OR lower(tags_json) LIKE ?
+                        ORDER BY importance DESC, updated_at DESC
+                        LIMIT ?
+                        """,
+                        (like, like, limit),
+                    ).fetchall()
+                for row in rows:
+                    memory = self._row_to_memory(row)
+                    rows_by_id[memory["id"]] = memory
+        return list(rows_by_id.values())[:limit]
+
+    def delete_memory(self, memory_id: str) -> bool:
+        with self.connect() as conn:
+            exists = conn.execute("SELECT 1 FROM memory_records WHERE id = ?", (memory_id,)).fetchone()
+            if not exists:
+                return False
+            conn.execute("DELETE FROM memory_records WHERE id = ?", (memory_id,))
+        return True
+
     def _row_to_document(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
             "id": row["id"],
@@ -362,4 +516,17 @@ class KnowledgeRepository:
             "char_end": row["char_end"],
             "metadata": json.loads(row["metadata_json"]),
             "created_at": row["created_at"],
+        }
+
+    def _row_to_memory(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "kind": row["kind"],
+            "content": row["content"],
+            "importance": row["importance"],
+            "tags": json.loads(row["tags_json"]),
+            "metadata": json.loads(row["metadata_json"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }

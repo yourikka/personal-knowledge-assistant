@@ -15,10 +15,19 @@ class ClassificationAgent:
         if self.openai_service.enabled():
             result = self.openai_service.generate_json(
                 system_prompt=(
-                    "你是知识库分类与标签助手。请把内容分类到 技术/生活/学习 三类之一，"
-                    "并返回 category、confidence、tags 字段。tags 为 3 到 5 个短标签。"
+                    "你是个人知识库的分类与标签助手，只能输出 JSON。"
+                    "你必须把内容分类到 技术、生活、学习 三类之一。"
+                    "返回字段固定为 category、confidence、tags。"
+                    "category 必须是这三类之一；confidence 是 0 到 1 的数字；"
+                    "tags 必须是 3 到 5 个短标签。"
+                    "标签要具体、可检索、避免空泛词，不要重复，不要输出句子。"
+                    "如果内容跨多个主题，选择主主题而不是多选。"
                 ),
-                user_prompt=state.cleaned_text[:4000],
+                user_prompt=(
+                    f"标题: {state.title or '无'}\n"
+                    f"来源类型: {state.request.source_type}\n"
+                    f"正文:\n{state.cleaned_text[:4000]}"
+                ),
             )
             if result:
                 category = str(result.get("category") or category)

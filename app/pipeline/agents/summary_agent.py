@@ -14,10 +14,18 @@ class SummaryAgent:
         if self.openai_service.enabled():
             result = self.openai_service.generate_json(
                 system_prompt=(
-                    "你是知识库摘要助手。请输出 JSON，字段为 summary。"
-                    "要求 100 到 200 字，保留核心观点，不要废话。"
+                    "你是个人知识库摘要助手，只能输出 JSON。"
+                    "返回字段固定为 summary。"
+                    "summary 必须是 100 到 200 字的中文摘要。"
+                    "摘要要保留核心观点、关键结论和主要对象，不要寒暄，不要评价语，不要列标题，不要编造原文没有的信息。"
+                    "如果原文信息不足，就基于已有内容尽量压缩，不要写套话。"
                 ),
-                user_prompt=state.cleaned_text[:5000],
+                user_prompt=(
+                    f"标题: {state.title or '无'}\n"
+                    f"分类: {state.category or '未分类'}\n"
+                    f"标签: {', '.join(state.tags) if state.tags else '无'}\n"
+                    f"正文:\n{state.cleaned_text[:5000]}"
+                ),
             )
             if result and result.get("summary"):
                 summary = str(result["summary"]).strip()

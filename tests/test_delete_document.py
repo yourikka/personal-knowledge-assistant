@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.db import KnowledgeRepository
 from app.pipeline.orchestrator import KnowledgePipeline
 from app.config import Settings
+from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
 
 
@@ -16,7 +17,8 @@ def build_pipeline(tmp_path):
         openai_api_key="",
     )
     repo = KnowledgeRepository(settings.sqlite_path)
-    vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma)
+    embedding_service = EmbeddingService(settings)
+    vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma, embedding_service)
     pipeline = KnowledgePipeline(settings, repo, vector_store)
     return repo, vector_store, pipeline
 

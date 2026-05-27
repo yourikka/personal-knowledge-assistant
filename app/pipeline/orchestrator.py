@@ -12,6 +12,7 @@ from app.pipeline.agents.parser_agent import ParserAgent
 from app.pipeline.agents.query_agent import QueryAgent
 from app.pipeline.agents.summary_agent import SummaryAgent
 from app.pipeline.agents.image_generation_agent import ImageGenerationAgent
+from app.services.memory_service import MemoryService
 from app.services.openai_client import OpenAIService
 from app.services.rag_service import RAGService
 from app.services.chunking import DocumentChunker
@@ -38,8 +39,16 @@ class KnowledgePipeline:
         self.classification = ClassificationAgent(self.openai_service)
         self.summary = SummaryAgent(self.openai_service)
         self.rag_service = RAGService(settings, repo, vector_store, self.openai_service)
+        self.memory_service = MemoryService(settings, repo, vector_store, self.openai_service)
         self.linking = LinkingAgent(settings, repo, vector_store, self.rag_service)
-        self.query_agent = QueryAgent(settings, repo, vector_store, self.openai_service, self.rag_service)
+        self.query_agent = QueryAgent(
+            settings,
+            repo,
+            vector_store,
+            self.openai_service,
+            self.rag_service,
+            self.memory_service,
+        )
         self.image_generation_agent = ImageGenerationAgent(settings, self.openai_service)
         self.ingest_graph = self._build_ingest_graph()
         self.bootstrap()
@@ -68,6 +77,7 @@ class KnowledgePipeline:
                         "category": document["category"],
                     },
                 )
+        self.memory_service.bootstrap()
 
     def ingest(self, request: IngestRequest) -> dict:
         state = self._coerce_state(self.ingest_graph.invoke(PipelineState(request=request)))

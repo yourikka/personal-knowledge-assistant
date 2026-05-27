@@ -86,7 +86,7 @@ class RAGService:
     ) -> dict[str, dict[str, Any]]:
         candidates: dict[str, dict[str, Any]] = {}
         for query_index, query in enumerate(queries):
-            vector_hits = self.vector_store.search(query=query, top_k=candidate_limit * 4)
+            vector_hits = self.vector_store.search(query=query, top_k=candidate_limit * 4, kind="chunk")
             for rank, hit in enumerate(vector_hits):
                 chunk = self.repo.get_chunk(hit["id"])
                 if not chunk or chunk["document_id"] in exclude_ids:

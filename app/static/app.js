@@ -34,6 +34,7 @@ const els = {
   queryForm: document.getElementById("query-form"),
   queryInput: document.getElementById("query-input"),
   answerContent: document.getElementById("answer-content"),
+  memoriesList: document.getElementById("memories-list"),
   referencesList: document.getElementById("references-list"),
   imageForm: document.getElementById("image-form"),
   imageStage: document.getElementById("image-stage"),
@@ -415,6 +416,23 @@ function renderReferences(references) {
   });
 }
 
+function renderMemories(memories) {
+  if (!memories.length) {
+    els.memoriesList.innerHTML = '<div class="placeholder">暂无相关记忆。</div>';
+    return;
+  }
+
+  els.memoriesList.innerHTML = memories
+    .map((memory) => `
+      <article class="reference-item memory-item">
+        <strong>${escapeHtml(memory.kind)} · score ${Number(memory.score || 0).toFixed(4)}</strong>
+        <span class="reference-meta">${escapeHtml(memory.content || "")}</span>
+        <span class="reference-meta">${escapeHtml((memory.tags || []).join(", ") || "untagged")}</span>
+      </article>
+    `)
+    .join("");
+}
+
 function renderImageResult(result) {
   const imageSrc = result.image_b64 ? `data:image/png;base64,${result.image_b64}` : result.image_url;
   if (!imageSrc) {
@@ -578,11 +596,13 @@ async function handleQuery(event) {
       }),
     });
     els.answerContent.textContent = result.answer || "暂无答案。";
+    renderMemories(result.memories || []);
     renderReferences(result.references || []);
     appendLogs("query", result.logs || []);
   } catch (error) {
     appendLogs("query", error.message);
     els.answerContent.textContent = `检索失败：${error.message}`;
+    renderMemories([]);
     renderReferences([]);
   }
 }
