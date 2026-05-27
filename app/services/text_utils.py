@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+import hashlib
+import math
+import re
+from collections import Counter
+
+
+STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "into",
+    "一个",
+    "一些",
+    "我们",
+    "你们",
+    "他们",
+    "这些",
+    "那些",
+    "可以",
+    "以及",
+    "如果",
+    "因为",
+    "所以",
+    "然后",
+    "就是",
+    "适合",
+    "可以把",
+    "这个",
+    "那个",
+    "如果结合",
+    "它可以把",
+    "你可以用",
+    "工作流",
+    "一般",
+    "怎么",
+}
+
+AD_PATTERNS = [
+    r"广告",
+    r"扫码",
+    r"关注公众号",
+    r"免责声明",
+    r"点击下载",
+    r"转载注明",
+]
+
+
+def normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def fix_mojibake(text: str) -> str:
+    repaired = text.replace("\u00a0", " ").replace("\ufeff", "")
+    repaired = repaired.replace("â€”", "-").replace("â€œ", '"').replace("â€\x9d", '"')
+    return repaired
+
+
+def remove_noise(text: str) -> str:
+    cleaned = text
+    for pattern in AD_PATTERNS:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"https?://\S+", " ", cleaned)
+    cleaned = re.sub(r"(?i)(cookie|subscribe|newsletter|sign up|all rights reserved)", " ", cleaned)
+    cleaned = re.sub(r"(上一篇|下一篇|相关阅读|推荐阅读)", " ", cleaned)
+    return normalize_whitespace(cleaned)
+
+
+def text_stats(text: str) -> dict[str, int]:
+    tokens = tokenize(text)
+    return {
+        "chars": len(text),
+        "tokens": len(tokens),
+        "lines": len([line for line in text.splitlines() if line.strip()]),
+    }
+
+
+def tokenize(text: str) -> list[str]:
+    items = re.findall(r"[A-Za-z][A-Za-z0-9_\-]{1,}|[\u4e00-\u9fff]{2,8}", text.lower())
+    normalized = []
+    for item in items:
+        token = item.strip()
+        if not token or token in STOPWORDS or len(token) < 2:
+            continue
+        normalized.append(token)
+        if len(token) >= 4:
+            for size in (2, 3, 4):
+                for index in range(0, len(token) - size + 1):
+                    piece = token[index : index + size]
+                    if piece not in STOPWORDS:
+                        normalized.append(piece)
+    return normalized
+
+
+def extract_keywords(text: str, limit: int = 5) -> list[str]:
+    counts = Counter(tokenize(text))
+    if not counts:
+        return []
+    keywords = []
+    for token, _ in counts.most_common(limit * 3):
+        if re.fullmatch(r"[A-Za-z0-9_\-]+", token):
+            keywords.append(token)
+        elif 2 <= len(token) <= 6 and "可以" not in token and "适合" not in token:
+            keywords.append(token)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def overlap_score(left_text: str, right_text: str) -> float:
+    left_tokens = set(tokenize(left_text))
+    right_tokens = set(tokenize(right_text))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    intersection = left_tokens & right_tokens
+    union = left_tokens | right_tokens
+    return len(intersection) / len(union)
+
+
+def split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[。！？!?\.])\s+|\n+", text)
+    return [normalize_whitespace(part) for part in parts if normalize_whitespace(part)]
+
+
+def summarize_text(text: str, min_chars: int = 100, max_chars: int = 200) -> str:
+    sentences = split_sentences(text)
+    if not sentences:
+        return ""
+
+    keywords = set(extract_keywords(text, limit=8))
+    ranked = []
+    for sentence in sentences:
+        score = sum(1 for token in tokenize(sentence) if token in keywords)
+        ranked.append((score, sentence))
+    ranked.sort(key=lambda item: (-item[0], len(item[1])))
+
+    result = []
+    total = 0
+    for _, sentence in ranked:
+        if sentence in result:
+            continue
+        result.append(sentence)
+        total += len(sentence)
+        if total >= min_chars:
+            break
+
+    summary = " ".join(result)
+    summary = normalize_whitespace(summary)
+    summary = re.sub(r"(\b\w+\b)( \1\b)+", r"\1", summary, flags=re.IGNORECASE)
+    if len(summary) > max_chars:
+        summary = summary[: max_chars - 1].rstrip() + "…"
+    return summary
+
+
+def classify_text(text: str) -> tuple[str, float]:
+    category_keywords = {
+        "技术": ["python", "go", "agent", "rag", "数据库", "后端", "前端", "编程", "算法", "架构", "代码"],
+        "学习": ["学习", "课程", "笔记", "方法", "复盘", "考试", "读书", "知识", "训练"],
+        "生活": ["生活", "健康", "旅行", "饮食", "运动", "家庭", "情绪", "效率"],
+    }
+    lowered = text.lower()
+    scores: dict[str, int] = {}
+    for category, words in category_keywords.items():
+        scores[category] = sum(1 for word in words if word.lower() in lowered)
+
+    best_category = max(scores, key=scores.get)
+    best_score = scores[best_category]
+    confidence = 0.45 if best_score == 0 else min(0.95, 0.55 + best_score * 0.1)
+    return best_category, round(confidence, 2)
+
+
+def make_hash_embedding(text: str, dims: int = 128) -> list[float]:
+    vector = [0.0] * dims
+    counts = Counter(tokenize(text))
+    if not counts:
+        return vector
+
+    for token, count in counts.items():
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:4], "big") % dims
+        sign = 1.0 if digest[4] % 2 == 0 else -1.0
+        vector[index] += sign * float(count)
+
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm == 0:
+        return vector
+    return [value / norm for value in vector]
+
+
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    return sum(a * b for a, b in zip(left, right))
