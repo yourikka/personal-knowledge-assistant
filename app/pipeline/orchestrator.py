@@ -122,6 +122,19 @@ class KnowledgePipeline:
             rebuilt += len(related)
         return {"status": "ok", "documents": len(self.repo.iter_documents()), "links_rebuilt": rebuilt}
 
+    def delete_document(self, document_id: str) -> dict:
+        document = self.repo.get_document(document_id)
+        if not document:
+            raise ValueError("文档不存在。")
+
+        chunk_ids = [chunk["id"] for chunk in self.repo.list_document_chunks(document_id)]
+        deleted = self.repo.delete_document(document_id)
+        if not deleted:
+            raise ValueError("文档不存在。")
+
+        self.vector_store.delete_ids([document_id, *chunk_ids])
+        return {"status": "ok", "document_id": document_id, "deleted_chunk_ids": chunk_ids}
+
     def generate_image(self, prompt: str, size: str, quality: str) -> dict:
         return self.image_generation_agent.run(prompt=prompt, size=size, quality=quality)
 

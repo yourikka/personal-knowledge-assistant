@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Knowledge Codex Web</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#ingest-panel">跳到入库区</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="知识库导航">
+      <div class="sidebar-head">
+        <div class="brand-mark">KC</div>
+        <div>
+          <div class="brand-title">Knowledge Codex</div>
+          <div class="brand-subtitle">个人知识库整理助手</div>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="主要功能">
+        <button class="nav-item active" type="button" data-scroll-target="ingest-panel">
+          <span>＋</span>
+          <strong>内容入库</strong>
+        </button>
+        <button class="nav-item" type="button" data-scroll-target="pipeline-panel">
+          <span>⌁</span>
+          <strong>处理流水线</strong>
+        </button>
+        <button class="nav-item" type="button" data-scroll-target="content-panel">
+          <span>☰</span>
+          <strong>文档内容</strong>
+        </button>
+        <button class="nav-item" type="button" data-scroll-target="chunks-panel">
+          <span>▦</span>
+          <strong>切片结果</strong>
+        </button>
+        <button class="nav-item" type="button" data-scroll-target="query-panel">
+          <span>⌕</span>
+          <strong>检索问答</strong>
+        </button>
+      </nav>
+
+      <section class="sidebar-section">
+        <div class="section-title">最近文档</div>
+        <div id="document-list" class="document-list">
+          <div class="muted-row">正在加载文档...</div>
+        </div>
+      </section>
+
+      <section class="sidebar-footer">
+        <div class="status-row">
+          <span id="health-pill">system: checking</span>
+          <span id="doc-count-pill">docs: --</span>
+        </div>
+      </section>
+    </aside>
+
+    <main class="main-stage">
+      <section class="top-strip">
+        <div>
+          <h1>把内容整理成可检索的知识</h1>
+          <p>输入网页、PDF、Markdown、图片或文本，系统会依次完成解析、清洗、切片、分类、摘要和关联。</p>
+        </div>
+        <button class="secondary-action" type="button" id="use-sample-ingest">载入示例</button>
+      </section>
+
+      <section id="ingest-panel" class="primary-workspace">
+        <form id="ingest-form" class="ingest-composer">
+          <div class="composer-header">
+            <label>
+              <span>内容类型</span>
+              <select name="source_type" id="source-type">
+                <option value="markdown">Markdown</option>
+                <option value="text">纯文本</option>
+                <option value="html">HTML</option>
+                <option value="url">URL</option>
+                <option value="pdf">PDF</option>
+                <option value="image">图片 OCR</option>
+              </select>
+            </label>
+            <label>
+              <span>标题</span>
+              <input type="text" name="title" placeholder="例如：LangGraph 编排笔记">
+            </label>
+          </div>
+
+          <label class="source-field" id="source-text-wrap">
+            <span>内容源</span>
+            <textarea name="source" id="source-text" rows="11" placeholder="粘贴 Markdown、正文、HTML，或在 URL 类型下输入链接。"></textarea>
+          </label>
+
+          <label class="source-field hidden" id="file-input-wrap">
+            <span>上传文件</span>
+            <input type="file" id="source-file" accept=".pdf,image/*,.md,.txt">
+          </label>
+
+          <div class="composer-footer">
+            <button class="primary-action" type="submit">开始入库</button>
+            <span class="footer-note">入库后会自动生成切片、摘要、标签和关联。</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="process-grid">
+        <article id="pipeline-panel" class="panel pipeline-panel">
+          <div class="panel-head">
+            <h2>处理流水线</h2>
+            <span id="last-document-id" class="small-meta">等待文档</span>
+          </div>
+          <ol id="pipeline-steps" class="pipeline-steps">
+            <li data-step="acquisition"><span></span>采集</li>
+            <li data-step="parser"><span></span>解析</li>
+            <li data-step="cleaning"><span></span>清洗</li>
+            <li data-step="chunking"><span></span>切片</li>
+            <li data-step="classification"><span></span>分类打标</li>
+            <li data-step="summary"><span></span>摘要</li>
+            <li data-step="linking"><span></span>关联</li>
+          </ol>
+          <div id="ingest-result" class="result-summary">
+            <div class="placeholder">还没有入库结果。</div>
+          </div>
+        </article>
+
+        <article id="classification-panel" class="panel">
+          <div class="panel-head">
+            <h2>分类与摘要</h2>
+            <span id="runtime-mode" class="small-meta">FastAPI</span>
+          </div>
+          <div id="document-detail" class="document-detail">
+            <div class="placeholder">选择或入库文档后显示摘要、标签和来源。</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="content-panel" class="content-workspace">
+        <article class="panel content-panel">
+          <div class="panel-head">
+            <h2>文档内容</h2>
+            <div class="content-toolbar">
+              <label class="content-search">
+                <span>搜索</span>
+                <input type="search" id="content-search-input" placeholder="搜索文档列表">
+              </label>
+              <button class="refresh-link" type="button" data-scroll-target="chunks-panel">切片</button>
+            </div>
+          </div>
+          <div id="content-insight" class="content-insight">
+            <div class="placeholder">这里会按统一格式展示已入库文档，区块内部可独立滚动，点击任意文档进入阅读页。</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="process-grid second-row">
+        <article id="chunks-panel" class="panel wide-panel">
+          <div class="panel-head">
+            <h2>切片结果</h2>
+            <span id="chunk-count" class="small-meta">0 chunks</span>
+          </div>
+          <div id="chunks-list" class="chunks-list">
+            <div class="placeholder">文档入库后，这里显示真实 chunk 文本、标题路径和字符范围。</div>
+          </div>
+        </article>
+
+        <article id="query-panel" class="panel query-panel">
+          <div class="panel-head">
+            <h2>检索问答</h2>
+            <button class="refresh-link" type="button" id="refresh-documents">刷新文档</button>
+          </div>
+          <form id="query-form" class="query-form">
+            <textarea id="query-input" name="query" rows="5" placeholder="基于已入库内容提问，例如：这篇文章的核心结论是什么？"></textarea>
+            <div class="query-controls">
+              <label>
+                <span>会话</span>
+                <input type="text" name="session_id" value="web-session">
+              </label>
+              <label>
+                <span>Top K</span>
+                <input type="number" name="top_k" min="1" max="10" value="3">
+              </label>
+              <button class="primary-action compact" type="submit">提问</button>
+            </div>
+          </form>
+          <div id="answer-content" class="answer-panel">等待查询。</div>
+          <div id="references-list" class="references-list">
+            <div class="placeholder">暂无引用。</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="process-grid utility-row">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>知识关联</h2>
+            <span class="small-meta">related documents</span>
+          </div>
+          <div id="related-list" class="related-list">
+            <div class="placeholder">入库后显示相似内容和双向链接。</div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>运行日志</h2>
+            <span id="recent-docs-count" class="small-meta">0</span>
+          </div>
+          <div id="log-console" class="log-console" aria-live="polite">
+            <div class="log-line">system: web workspace initialized</div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>生成配图</h2>
+            <span class="small-meta">gpt-image-2</span>
+          </div>
+          <form id="image-form" class="image-form">
+            <textarea name="prompt" rows="4" placeholder="输入知识主题，生成封面或概念图。"></textarea>
+            <div class="image-controls">
+              <select name="size">
+                <option value="1024x1024">1024x1024</option>
+                <option value="1536x1024">1536x1024</option>
+                <option value="1024x1536">1024x1536</option>
+              </select>
+              <select name="quality">
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
+              </select>
+              <button class="secondary-action compact" type="submit">生成</button>
+            </div>
+          </form>
+          <div id="image-stage" class="image-stage">
+            <div class="placeholder">等待生成图片。</div>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+  <div id="reader-overlay" class="reader-overlay hidden" aria-hidden="true">
+    <article class="reader-dialog" role="dialog" aria-modal="true" aria-labelledby="reader-title">
+      <div class="reader-head">
+        <div>
+          <h2 id="reader-title">文档阅读</h2>
+          <div id="reader-meta" class="reader-meta">未选择文档</div>
+        </div>
+        <div class="reader-actions">
+          <div class="content-tabs" role="tablist" aria-label="阅读内容视图">
+            <button class="content-tab active" type="button" data-content-view="cleaned" role="tab" aria-selected="true">清洗后</button>
+            <button class="content-tab" type="button" data-content-view="raw" role="tab" aria-selected="false">原始内容</button>
+          </div>
+          <button class="reader-close" type="button" id="close-reader" aria-label="关闭阅读页">关闭</button>
+        </div>
+      </div>
+      <div id="reader-body" class="reader-body" tabindex="0">暂无内容。</div>
+    </article>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

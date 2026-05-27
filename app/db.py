@@ -22,6 +22,7 @@ class KnowledgeRepository:
     def connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()
@@ -137,6 +138,16 @@ class KnowledgeRepository:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM documents ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_document(row) for row in rows]
+
+    def delete_document(self, document_id: str) -> bool:
+        with self.connect() as conn:
+            exists = conn.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone()
+            if not exists:
+                return False
+            conn.execute("DELETE FROM document_links WHERE source_id = ? OR target_id = ?", (document_id, document_id))
+            conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
+            conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+        return True
 
     def search_documents_keyword(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         terms = [term.strip().lower() for term in query.split() if term.strip()]

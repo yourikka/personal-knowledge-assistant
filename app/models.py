@@ -35,6 +35,24 @@ class DocumentResponse(BaseModel):
     related: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class DocumentDetailResponse(DocumentResponse):
+    raw_text: str
+    cleaned_text: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    updated_at: str
+
+
+class DocumentChunkResponse(BaseModel):
+    id: str
+    document_id: str
+    chunk_index: int
+    text: str
+    char_start: int
+    char_end: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
 class IngestResponse(BaseModel):
     document_id: str
     duplicate: bool
@@ -64,6 +82,12 @@ class ReindexResponse(BaseModel):
     status: str
     documents: int
     links_rebuilt: int
+
+
+class DeleteDocumentResponse(BaseModel):
+    status: str
+    document_id: str
+    deleted_chunk_ids: list[str]
 
 
 class ImageGenerateRequest(BaseModel):

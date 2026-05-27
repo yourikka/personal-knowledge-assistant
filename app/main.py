@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import os
+from pathlib import Path
 import tempfile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import KnowledgeRepository
 from .models import (
+    DeleteDocumentResponse,
+    DocumentChunkResponse,
+    DocumentDetailResponse,
     DocumentResponse,
     HealthResponse,
     ImageGenerateRequest,
@@ -27,6 +33,7 @@ settings = get_settings()
 repo = KnowledgeRepository(settings.sqlite_path)
 vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma)
 pipeline = KnowledgePipeline(settings, repo, vector_store)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
@@ -36,6 +43,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Personal Knowledge Assistant", version="0.1.0", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def web_app() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -105,12 +118,39 @@ def list_documents(limit: int = 20) -> list[DocumentResponse]:
     return [DocumentResponse(**document, related=repo.list_links(document["id"])) for document in documents]
 
 
-@app.get("/api/knowledge/documents/{document_id}", response_model=DocumentResponse)
-def get_document(document_id: str) -> DocumentResponse:
+@app.get("/api/knowledge/documents/{document_id}", response_model=DocumentDetailResponse)
+def get_document(document_id: str) -> DocumentDetailResponse:
     document = repo.get_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="文档不存在。")
-    return DocumentResponse(**document, related=repo.list_links(document_id))
+    return DocumentDetailResponse(**document, related=repo.list_links(document_id))
+
+
+@app.get("/api/knowledge/documents/{document_id}/chunks", response_model=list[DocumentChunkResponse])
+def list_document_chunks(document_id: str) -> list[DocumentChunkResponse]:
+    if not repo.get_document(document_id):
+        raise HTTPException(status_code=404, detail="文档不存在。")
+    return [DocumentChunkResponse(**chunk) for chunk in repo.list_document_chunks(document_id)]
+
+
+def delete_document_response(document_id: str) -> DeleteDocumentResponse:
+    try:
+        result = pipeline.delete_document(document_id)
+        return DeleteDocumentResponse(**result)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"删除文档失败：{error}") from error
+
+
+@app.delete("/api/knowledge/documents/{document_id}", response_model=DeleteDocumentResponse)
+def delete_document(document_id: str) -> DeleteDocumentResponse:
+    return delete_document_response(document_id)
+
+
+@app.post("/api/knowledge/documents/{document_id}/delete", response_model=DeleteDocumentResponse)
+def delete_document_via_post(document_id: str) -> DeleteDocumentResponse:
+    return delete_document_response(document_id)
 
 
 @app.post("/api/knowledge/reindex", response_model=ReindexResponse)

@@ -32,6 +32,8 @@
 - `app/services/chunking.py`：文档切块策略，保留标题路径、字符范围和 overlap
 - `app/services/text_utils.py`：文本清洗、标签、摘要、向量工具
 - `app/services/vector_store.py`：Chroma / 本地向量检索适配
+- `app/static/`：知识入库、文档内容查看、切片、检索和文档管理 Web 前端
+- `docs/ui-behavior.md`：前端交互约定，约束文档列表区、阅读页和滚动行为
 
 ## 运行方式
 
@@ -55,6 +57,11 @@ cp .env.example .env
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
+说明：
+
+- 根路径 `/` 直接提供 Web 工作台，区块按内容入库、处理流水线、文档内容、切片结果、分类摘要、知识关联和检索问答组织。
+- 启动服务后，用浏览器访问 `http://127.0.0.1:8010/` 即可使用。
+
 ## 主要接口
 
 ### 健康检查
@@ -73,6 +80,24 @@ curl -X POST http://127.0.0.1:8010/api/knowledge/ingest \
     "source": "# LangGraph\n\nLangGraph 适合做多节点 Agent 编排。",
     "title": "LangGraph 笔记"
   }'
+```
+
+### 查看文档切片
+
+```bash
+curl http://127.0.0.1:8010/api/knowledge/documents/{document_id}/chunks
+```
+
+### 删除文档
+
+```bash
+curl -X DELETE http://127.0.0.1:8010/api/knowledge/documents/{document_id}
+```
+
+如果运行环境不方便发送 `DELETE` 请求，也可以使用兼容入口：
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/knowledge/documents/{document_id}/delete
 ```
 
 ### 文件上传入库

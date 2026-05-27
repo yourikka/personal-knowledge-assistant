@@ -48,6 +48,14 @@ class VectorStore:
         self.local_embeddings = {}
         self.local_texts = {}
 
+    def delete_ids(self, ids: list[str]) -> None:
+        for item_id in ids:
+            self.local_embeddings.pop(item_id, None)
+            self.local_texts.pop(item_id, None)
+
+        if self.collection is not None and ids:
+            self.collection.delete(ids=ids)
+
     def search(self, query: str, top_k: int, exclude_ids: set[str] | None = None) -> list[dict[str, Any]]:
         exclude_ids = exclude_ids or set()
         query_embedding = make_hash_embedding(query)
