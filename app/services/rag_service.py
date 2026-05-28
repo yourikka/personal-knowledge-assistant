@@ -9,6 +9,7 @@ from app.db import KnowledgeRepository
 from app.services.graph_service import GraphExtractionService
 from app.services.openai_client import OpenAIService
 from app.services.personalization_service import PersonalizationService
+from app.services.query_cache import QueryCacheService
 from app.services.text_utils import extract_keywords, overlap_score, tokenize
 from app.services.vector_store import VectorStore
 
@@ -22,6 +23,7 @@ class RAGService:
         openai_service: OpenAIService,
         graph_service: GraphExtractionService | None = None,
         personalization_service: PersonalizationService | None = None,
+        query_cache: QueryCacheService | None = None,
     ) -> None:
         self.settings = settings
         self.repo = repo
@@ -29,6 +31,7 @@ class RAGService:
         self.openai_service = openai_service
         self.graph_service = graph_service
         self.personalization_service = personalization_service
+        self.query_cache = query_cache
 
     def retrieve(
         self,
@@ -38,6 +41,14 @@ class RAGService:
         exclude_ids: set[str] | None = None,
     ) -> dict[str, Any]:
         logs: list[str] = []
+        cache_key = None
+        if self.query_cache and not exclude_ids:
+            cache_key = self.query_cache.make_key(query=query, top_k=top_k, session_id=session_id)
+            cached = self.query_cache.get(cache_key)
+            if cached:
+                cached["logs"] = ["cache: 命中高频 Query 缓存。", *cached.get("logs", [])]
+                return cached
+
         expanded_queries = self.expand_query(query=query, session_id=session_id)
         logs.append(f"rag: 查询扩展 {len(expanded_queries)} 条。")
 
@@ -51,13 +62,16 @@ class RAGService:
         references, context = self._build_context(selected)
         logs.append(f"rag: 重排后选中 {len(references)} 条，上下文 {len(context)} 字符。")
 
-        return {
+        result = {
             "query": query,
             "expanded_queries": expanded_queries,
             "references": references,
             "context": context,
             "logs": logs,
         }
+        if self.query_cache and cache_key:
+            self.query_cache.set(cache_key, result)
+        return result
 
     def expand_query(self, query: str, session_id: str | None = None) -> list[str]:
         queries = [query]

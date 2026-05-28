@@ -38,6 +38,10 @@ class Settings:
     graph_min_entity_length: int = int(os.getenv("GRAPH_MIN_ENTITY_LENGTH", "2"))
     self_check_enabled: bool = os.getenv("SELF_CHECK_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     personalization_boost: float = float(os.getenv("PERSONALIZATION_BOOST", "0.08"))
+    query_cache_enabled: bool = os.getenv("QUERY_CACHE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    query_cache_ttl_seconds: int = int(os.getenv("QUERY_CACHE_TTL_SECONDS", "300"))
+    query_cache_max_entries: int = int(os.getenv("QUERY_CACHE_MAX_ENTRIES", "256"))
+    query_stream_chunk_chars: int = int(os.getenv("QUERY_STREAM_CHUNK_CHARS", "48"))
     memory_enabled: bool = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     memory_top_k: int = int(os.getenv("MEMORY_TOP_K", "5"))
     memory_min_score: float = float(os.getenv("MEMORY_MIN_SCORE", "0.12"))

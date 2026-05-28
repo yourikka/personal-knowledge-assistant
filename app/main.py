@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import os
 from pathlib import Path
 import tempfile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
@@ -159,6 +160,24 @@ def query_knowledge(request: QueryRequest) -> QueryResponse:
         return QueryResponse(session_id=request.session_id, **result)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"检索失败：{error}") from error
+
+
+@app.post("/api/knowledge/query/stream")
+def stream_query_knowledge(request: QueryRequest) -> StreamingResponse:
+    def events():
+        try:
+            for item in pipeline.query_stream(
+                query=request.query,
+                top_k=request.top_k,
+                session_id=request.session_id,
+            ):
+                payload = json.dumps(item["data"], ensure_ascii=False)
+                yield f"event: {item['event']}\ndata: {payload}\n\n"
+        except Exception as error:
+            payload = json.dumps({"error": f"流式检索失败：{error}"}, ensure_ascii=False)
+            yield f"event: error\ndata: {payload}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @app.post("/api/personalization/clicks", response_model=PersonalizationEventResponse)

@@ -18,6 +18,7 @@ from app.services.rag_service import RAGService
 from app.services.chunking import DocumentChunker
 from app.services.graph_service import GraphExtractionService
 from app.services.personalization_service import PersonalizationService
+from app.services.query_cache import QueryCacheService
 from app.services.self_check_service import SelfCheckService
 from app.services.vector_store import VectorStore
 
@@ -41,6 +42,7 @@ class KnowledgePipeline:
         )
         self.self_check = SelfCheckService(settings)
         self.personalization_service = PersonalizationService(settings, repo)
+        self.query_cache = QueryCacheService(settings)
         self.classification = ClassificationAgent(self.openai_service, self.self_check)
         self.summary = SummaryAgent(self.openai_service, self.self_check)
         self.graph_service = GraphExtractionService(settings, repo)
@@ -51,6 +53,7 @@ class KnowledgePipeline:
             self.openai_service,
             self.graph_service,
             self.personalization_service,
+            self.query_cache,
         )
         self.memory_service = MemoryService(settings, repo, vector_store, self.openai_service)
         self.linking = LinkingAgent(settings, repo, vector_store, self.rag_service)
@@ -140,6 +143,17 @@ class KnowledgePipeline:
     def query(self, query: str, top_k: int, session_id: str | None = None) -> dict:
         return self.query_agent.run(query=query, top_k=top_k, session_id=session_id)
 
+    def query_stream(self, query: str, top_k: int, session_id: str | None = None):
+        result = self.query(query=query, top_k=top_k, session_id=session_id)
+        chunk_size = max(12, self.query_agent.settings.query_stream_chunk_chars)
+        answer = result["answer"]
+        for index in range(0, len(answer), chunk_size):
+            yield {"event": "delta", "data": answer[index : index + chunk_size]}
+        yield {"event": "references", "data": result["references"]}
+        yield {"event": "memories", "data": result["memories"]}
+        yield {"event": "logs", "data": result["logs"]}
+        yield {"event": "done", "data": {"session_id": session_id}}
+
     def rebuild_links(self) -> dict:
         self.bootstrap()
         rebuilt = 0
@@ -147,6 +161,7 @@ class KnowledgePipeline:
             related = self._related_links_for_document(document)
             self.repo.replace_links(document["id"], related)
             rebuilt += len(related)
+        self.query_cache.clear()
         return {"status": "ok", "documents": len(self.repo.iter_documents()), "links_rebuilt": rebuilt}
 
     def reindex_document(self, document_id: str) -> dict:
@@ -195,6 +210,7 @@ class KnowledgePipeline:
         graph = self.graph_service.build_for_document(document=document, chunks=chunks)
         related = self._related_links_for_document(document)
         self.repo.replace_links(document_id, related)
+        self.query_cache.clear()
         return {
             "status": "ok",
             "document_id": document_id,
@@ -217,6 +233,7 @@ class KnowledgePipeline:
             raise ValueError("文档不存在。")
 
         self.vector_store.delete_ids([document_id, *section_ids, *chunk_ids])
+        self.query_cache.clear()
         return {"status": "ok", "document_id": document_id, "deleted_chunk_ids": chunk_ids}
 
     def generate_image(self, prompt: str, size: str, quality: str) -> dict:
@@ -284,6 +301,7 @@ class KnowledgePipeline:
         )
         self.repo.replace_document_chunks(state.document_id, state.chunks)
         self.repo.replace_document_sections(state.document_id, state.sections)
+        self.query_cache.clear()
         state.logs.append(
             f"persist: 已写入 SQLite 元数据仓库、{len(state.sections)} 个 section 和 {len(state.chunks)} 个 chunk。"
         )
