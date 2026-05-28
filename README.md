@@ -36,6 +36,8 @@
 - `app/services/memory_service.py`：会话记忆召回、格式化、提炼和向量索引
 - `app/services/vector_store.py`：Chroma / 本地向量检索适配
 - `app/static/`：知识入库、文档内容查看、切片、检索和文档管理 Web 前端
+- `evals/`：离线 RAG 评测样例
+- `scripts/eval_rag.py`：RAG 检索与回答质量评测脚本
 - `docs/spec.md`：项目完整产品与技术规格说明
 - `docs/improvement-spec.md`：项目增强路线与技术升级规格说明
 - `docs/ui-behavior.md`：前端交互约定，约束文档列表区、阅读页和滚动行为
@@ -202,6 +204,7 @@ agent_acquisition
 - 支持会话历史和长期记忆写入 SQLite，用于多轮上下文增强
 - OCR、Playwright、Chroma 都是可选能力，不会阻塞基础功能启动
 - 支持 `python scripts/smoke_test.py` 做基础回归测试
+- 支持 `python scripts/eval_rag.py` 做离线 RAG 质量评测
 
 ## OpenAI 配置
 
