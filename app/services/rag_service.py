@@ -6,6 +6,7 @@ from typing import Any
 
 from app.config import Settings
 from app.db import KnowledgeRepository
+from app.services.graph_service import GraphExtractionService
 from app.services.openai_client import OpenAIService
 from app.services.text_utils import extract_keywords, overlap_score, tokenize
 from app.services.vector_store import VectorStore
@@ -18,11 +19,13 @@ class RAGService:
         repo: KnowledgeRepository,
         vector_store: VectorStore,
         openai_service: OpenAIService,
+        graph_service: GraphExtractionService | None = None,
     ) -> None:
         self.settings = settings
         self.repo = repo
         self.vector_store = vector_store
         self.openai_service = openai_service
+        self.graph_service = graph_service
 
     def retrieve(
         self,
@@ -120,7 +123,42 @@ class RAGService:
                     exclude_ids=exclude_ids,
                     candidates=candidates,
                 )
+            self._collect_graph_candidates(
+                query=query,
+                candidate_limit=candidate_limit,
+                exclude_ids=exclude_ids,
+                candidates=candidates,
+            )
         return candidates
+
+    def _collect_graph_candidates(
+        self,
+        query: str,
+        candidate_limit: int,
+        exclude_ids: set[str],
+        candidates: dict[str, dict[str, Any]],
+    ) -> None:
+        if not self.graph_service or not self.settings.graph_enabled:
+            return
+        documents = self.graph_service.related_documents(query=query, limit=self.settings.graph_query_top_k)
+        for rank, document in enumerate(documents):
+            if document["id"] in exclude_ids:
+                continue
+            for chunk in self._best_chunks_for_document(query, document["id"], limit=2):
+                self._add_candidate(
+                    candidates=candidates,
+                    chunk=chunk,
+                    document=document,
+                    signal={
+                        "source": "graph_entity",
+                        "query": query,
+                        "score": min(1.0, 0.38 + document.get("graph_mention_count", 1) * 0.06),
+                        "rank": rank + 1,
+                        "entity": document.get("graph_entity_name"),
+                    },
+                )
+                if len(candidates) >= candidate_limit * 4:
+                    return
 
     def _collect_hierarchical_candidates(
         self,

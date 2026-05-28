@@ -109,6 +109,46 @@ class KnowledgeRepository:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS graph_entities (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    aliases_json TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS graph_edges (
+                    id TEXT PRIMARY KEY,
+                    source_entity_id TEXT NOT NULL,
+                    target_entity_id TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    evidence_document_id TEXT NOT NULL,
+                    evidence_chunk_id TEXT,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(source_entity_id) REFERENCES graph_entities(id) ON DELETE CASCADE,
+                    FOREIGN KEY(target_entity_id) REFERENCES graph_entities(id) ON DELETE CASCADE,
+                    FOREIGN KEY(evidence_document_id) REFERENCES documents(id) ON DELETE CASCADE,
+                    FOREIGN KEY(evidence_chunk_id) REFERENCES document_chunks(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS document_entities (
+                    document_id TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    mention_count INTEGER NOT NULL,
+                    first_chunk_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (document_id, entity_id),
+                    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
+                    FOREIGN KEY(entity_id) REFERENCES graph_entities(id) ON DELETE CASCADE,
+                    FOREIGN KEY(first_chunk_id) REFERENCES document_chunks(id) ON DELETE SET NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id, chunk_index);
                 CREATE INDEX IF NOT EXISTS idx_document_sections_document_id ON document_sections(document_id, section_index);
@@ -117,6 +157,10 @@ class KnowledgeRepository:
                 CREATE INDEX IF NOT EXISTS idx_memory_records_kind ON memory_records(kind, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_scope ON memory_records(scope, status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_conflict_key ON memory_records(conflict_key, status);
+                CREATE INDEX IF NOT EXISTS idx_graph_entities_name ON graph_entities(name, entity_type);
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_entity_id, relation);
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_entity_id, relation);
+                CREATE INDEX IF NOT EXISTS idx_document_entities_entity ON document_entities(entity_id, document_id);
                 """
             )
             self._ensure_memory_columns(conn)
@@ -195,6 +239,8 @@ class KnowledgeRepository:
             if not exists:
                 return False
             conn.execute("DELETE FROM document_links WHERE source_id = ? OR target_id = ?", (document_id, document_id))
+            conn.execute("DELETE FROM graph_edges WHERE evidence_document_id = ?", (document_id,))
+            conn.execute("DELETE FROM document_entities WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM document_sections WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
@@ -660,6 +706,184 @@ class KnowledgeRepository:
             conn.execute("DELETE FROM memory_records WHERE id = ?", (memory_id,))
         return True
 
+    def replace_document_graph(
+        self,
+        document_id: str,
+        entities: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+    ) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute("DELETE FROM graph_edges WHERE evidence_document_id = ?", (document_id,))
+            conn.execute("DELETE FROM document_entities WHERE document_id = ?", (document_id,))
+            for entity in entities:
+                conn.execute(
+                    """
+                    INSERT INTO graph_entities(
+                        id, name, entity_type, aliases_json, metadata_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        entity_type = excluded.entity_type,
+                        aliases_json = excluded.aliases_json,
+                        metadata_json = excluded.metadata_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        entity["id"],
+                        entity["name"],
+                        entity["entity_type"],
+                        json.dumps(entity.get("aliases", []), ensure_ascii=False),
+                        json.dumps(entity.get("metadata", {}), ensure_ascii=False),
+                        entity.get("created_at", now),
+                        now,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO document_entities(
+                        document_id, entity_id, mention_count, first_chunk_id, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(document_id, entity_id) DO UPDATE SET
+                        mention_count = excluded.mention_count,
+                        first_chunk_id = excluded.first_chunk_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        document_id,
+                        entity["id"],
+                        int(entity.get("mention_count", 1)),
+                        entity.get("first_chunk_id"),
+                        now,
+                        now,
+                    ),
+                )
+            for edge in edges:
+                conn.execute(
+                    """
+                    INSERT INTO graph_edges(
+                        id, source_entity_id, target_entity_id, relation, confidence,
+                        evidence_document_id, evidence_chunk_id, metadata_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        relation = excluded.relation,
+                        confidence = excluded.confidence,
+                        evidence_document_id = excluded.evidence_document_id,
+                        evidence_chunk_id = excluded.evidence_chunk_id,
+                        metadata_json = excluded.metadata_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        edge["id"],
+                        edge["source_entity_id"],
+                        edge["target_entity_id"],
+                        edge["relation"],
+                        float(edge.get("confidence", 0.5)),
+                        document_id,
+                        edge.get("evidence_chunk_id"),
+                        json.dumps(edge.get("metadata", {}), ensure_ascii=False),
+                        edge.get("created_at", now),
+                        now,
+                    ),
+                )
+
+    def list_document_entities(self, document_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT e.*, de.mention_count, de.first_chunk_id
+                FROM document_entities de
+                JOIN graph_entities e ON e.id = de.entity_id
+                WHERE de.document_id = ?
+                ORDER BY de.mention_count DESC, e.name ASC
+                """,
+                (document_id,),
+            ).fetchall()
+        return [self._row_to_graph_entity(row) for row in rows]
+
+    def list_document_graph_edges(self, document_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ge.*, src.name AS source_name, src.entity_type AS source_type,
+                       dst.name AS target_name, dst.entity_type AS target_type
+                FROM graph_edges ge
+                JOIN graph_entities src ON src.id = ge.source_entity_id
+                JOIN graph_entities dst ON dst.id = ge.target_entity_id
+                WHERE ge.evidence_document_id = ?
+                ORDER BY ge.confidence DESC, ge.updated_at DESC
+                LIMIT ?
+                """,
+                (document_id, limit),
+            ).fetchall()
+        return [self._row_to_graph_edge(row) for row in rows]
+
+    def find_entities_by_names(self, names: list[str], limit: int = 20) -> list[dict[str, Any]]:
+        normalized = [name.strip().lower() for name in names if name.strip()]
+        if not normalized:
+            return []
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        with self.connect() as conn:
+            for name in normalized:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM graph_entities
+                    WHERE lower(name) = ?
+                       OR lower(aliases_json) LIKE ?
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (name, f"%{name}%", limit),
+                ).fetchall()
+                for row in rows:
+                    entity = self._row_to_graph_entity(row)
+                    rows_by_id[entity["id"]] = entity
+        return list(rows_by_id.values())[:limit]
+
+    def graph_documents_for_entities(self, entity_ids: list[str], limit: int = 10) -> list[dict[str, Any]]:
+        if not entity_ids:
+            return []
+        placeholders = ",".join("?" for _ in entity_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT d.*, de.entity_id, de.mention_count, e.name AS entity_name, e.entity_type
+                FROM document_entities de
+                JOIN documents d ON d.id = de.document_id
+                JOIN graph_entities e ON e.id = de.entity_id
+                WHERE de.entity_id IN ({placeholders})
+                ORDER BY de.mention_count DESC, d.updated_at DESC
+                LIMIT ?
+                """,
+                (*entity_ids, limit),
+            ).fetchall()
+        return [self._row_to_graph_document(row) for row in rows]
+
+    def graph_neighbors(self, entity_ids: list[str], limit: int = 20) -> list[dict[str, Any]]:
+        if not entity_ids:
+            return []
+        placeholders = ",".join("?" for _ in entity_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT ge.*, src.name AS source_name, src.entity_type AS source_type,
+                       dst.name AS target_name, dst.entity_type AS target_type
+                FROM graph_edges ge
+                JOIN graph_entities src ON src.id = ge.source_entity_id
+                JOIN graph_entities dst ON dst.id = ge.target_entity_id
+                WHERE ge.source_entity_id IN ({placeholders})
+                   OR ge.target_entity_id IN ({placeholders})
+                ORDER BY ge.confidence DESC, ge.updated_at DESC
+                LIMIT ?
+                """,
+                (*entity_ids, *entity_ids, limit),
+            ).fetchall()
+        return [self._row_to_graph_edge(row) for row in rows]
+
     def _row_to_document(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
             "id": row["id"],
@@ -721,3 +945,42 @@ class KnowledgeRepository:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def _row_to_graph_entity(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "entity_type": row["entity_type"],
+            "aliases": json.loads(row["aliases_json"]),
+            "metadata": json.loads(row["metadata_json"]),
+            "mention_count": row["mention_count"] if "mention_count" in row.keys() else None,
+            "first_chunk_id": row["first_chunk_id"] if "first_chunk_id" in row.keys() else None,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _row_to_graph_edge(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "source_entity_id": row["source_entity_id"],
+            "target_entity_id": row["target_entity_id"],
+            "source_name": row["source_name"],
+            "source_type": row["source_type"],
+            "target_name": row["target_name"],
+            "target_type": row["target_type"],
+            "relation": row["relation"],
+            "confidence": row["confidence"],
+            "evidence_document_id": row["evidence_document_id"],
+            "evidence_chunk_id": row["evidence_chunk_id"],
+            "metadata": json.loads(row["metadata_json"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _row_to_graph_document(self, row: sqlite3.Row) -> dict[str, Any]:
+        document = self._row_to_document(row)
+        document["graph_entity_id"] = row["entity_id"]
+        document["graph_entity_name"] = row["entity_name"]
+        document["graph_entity_type"] = row["entity_type"]
+        document["graph_mention_count"] = row["mention_count"]
+        return document

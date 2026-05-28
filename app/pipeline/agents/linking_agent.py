@@ -93,7 +93,8 @@ class LinkingAgent:
             )
 
         state.related = related
-        state.graph = {
+        existing_graph = state.graph or {"nodes": [], "edges": []}
+        document_graph = {
             "nodes": [
                 {"id": state.document_id, "title": state.title, "category": state.category},
                 *[
@@ -117,9 +118,19 @@ class LinkingAgent:
                 for item in related
             ],
         }
+        state.graph = {
+            "nodes": self._merge_nodes(existing_graph.get("nodes", []), document_graph["nodes"]),
+            "edges": [*existing_graph.get("edges", []), *document_graph["edges"]],
+        }
         self.repo.replace_links(
             source_id=state.document_id,
             related=[{"target_id": item["target_id"], "score": item["score"]} for item in related],
         )
         state.logs.append(f"linking: 已完成相似内容关联和双向链接建立，关联 {len(related)} 条。")
         return state
+
+    def _merge_nodes(self, left: list[dict], right: list[dict]) -> list[dict]:
+        nodes: dict[str, dict] = {}
+        for item in [*left, *right]:
+            nodes[item["id"]] = {**nodes.get(item["id"], {}), **item}
+        return list(nodes.values())

@@ -20,6 +20,7 @@
 - 支持第三方 OpenAI 兼容 API，只需要提供兼容的 `base_url + api_key`
 - 检索问答使用 chunk 级增强 RAG：高质量切块、查询改写、多路召回、重排、MMR 去冗余、上下文压缩、引用回答
 - 检索问答支持记忆系统：按会话召回相关记忆，回答后自动提炼用户偏好、目标、决策和稳定事实
+- 入库后抽取基础知识图谱：实体、实体关系、文档实体映射，并在 RAG 中作为图谱召回信号
 
 ## 项目结构
 
@@ -33,6 +34,7 @@
 - `app/services/chunking.py`：文档切块策略，保留标题路径、字符范围和 overlap
 - `app/services/text_utils.py`：文本清洗、标签、摘要、向量工具
 - `app/services/embedding_service.py`：智谱 `embedding-3` / 本地回退向量生成
+- `app/services/graph_service.py`：实体抽取、关系构建和图谱增强召回
 - `app/services/memory_service.py`：会话记忆召回、格式化、提炼和向量索引
 - `app/services/vector_store.py`：Chroma / 本地向量检索适配
 - `app/static/`：知识入库、文档内容查看、切片、检索和文档管理 Web 前端
@@ -159,7 +161,7 @@ curl -X POST http://127.0.0.1:8010/api/images/generate \
 ```text
 agent_acquisition
   ├─ duplicate -> END
-  └─ parse -> agent_parser -> agent_cleaning -> agent_chunking -> agent_classification -> agent_summary -> persist -> agent_linking -> END
+  └─ parse -> agent_parser -> agent_cleaning -> agent_chunking -> agent_classification -> agent_summary -> persist -> agent_graph -> agent_linking -> END
 ```
 
 节点之间传递 `PipelineState`，重复文档会在采集节点后通过条件边直接结束，不会重复解析、摘要或写库。
@@ -170,13 +172,23 @@ agent_acquisition
 
 - 高质量切块：优先保留 Markdown 标题路径、段落和句子边界，超长内容用带 overlap 的滑窗兜底。
 - 查询改写：结合会话历史和关键词生成多个检索表达。
-- 多路召回：以 chunk 为候选，同时使用向量召回、关键词召回、标签和摘要信号。
+- 多路召回：以 chunk 为候选，同时使用向量召回、关键词召回、分层文档/section 召回、图谱实体召回、标签和摘要信号。
 - 混合重排：综合语义分、词项重叠、召回信号、标签命中和新近度。
 - MMR 选择：减少重复 chunk，优先保留互补信息。
 - 上下文压缩：按字符预算组装标题、来源、分类、标签、摘要、标题路径和 chunk 原文。
 - 引用回答：问答 Agent 要求模型只基于上下文回答，并使用 `[1]`、`[2]` 引用来源；接口引用会返回 `chunk_id`、`chunk_index`、`char_start`、`char_end`。
 
 `LinkingAgent` 也复用这套 RAG 召回结果来建立双向链接，关联边会保留召回信号，便于后续做图谱展示和排障。
+
+## 知识图谱
+
+图谱增强默认开启，不依赖外部模型。当前使用本地启发式抽取，先覆盖人物、技术、组织、概念四类实体。
+
+- 实体表：`graph_entities` 保存标准实体名、类型、别名和元数据。
+- 关系表：`graph_edges` 保存实体间关系、置信度和证据文档/chunk。
+- 映射表：`document_entities` 保存文档和实体的 mention 统计。
+- 检索增强：`RAGService` 会根据 query 命中的实体扩展候选文档，并在 `signals` 中标记 `graph_entity`。
+- 回退策略：设置 `GRAPH_ENABLED=false` 后图谱抽取和图谱召回都会关闭，原 RAG 链路不受影响。
 
 ## 记忆系统
 
@@ -231,6 +243,9 @@ RAG_MULTI_QUERY_LIMIT=4
 RAG_CANDIDATE_MULTIPLIER=5
 RAG_MMR_LAMBDA=0.72
 RAG_CONTEXT_CHAR_BUDGET=6000
+GRAPH_ENABLED=true
+GRAPH_QUERY_TOP_K=6
+GRAPH_MIN_ENTITY_LENGTH=2
 MEMORY_ENABLED=true
 MEMORY_TOP_K=5
 MEMORY_MIN_SCORE=0.12

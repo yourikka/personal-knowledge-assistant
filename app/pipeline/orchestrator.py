@@ -16,6 +16,7 @@ from app.services.memory_service import MemoryService
 from app.services.openai_client import OpenAIService
 from app.services.rag_service import RAGService
 from app.services.chunking import DocumentChunker
+from app.services.graph_service import GraphExtractionService
 from app.services.vector_store import VectorStore
 
 from langgraph.graph import END, StateGraph
@@ -38,7 +39,8 @@ class KnowledgePipeline:
         )
         self.classification = ClassificationAgent(self.openai_service)
         self.summary = SummaryAgent(self.openai_service)
-        self.rag_service = RAGService(settings, repo, vector_store, self.openai_service)
+        self.graph_service = GraphExtractionService(settings, repo)
+        self.rag_service = RAGService(settings, repo, vector_store, self.openai_service, self.graph_service)
         self.memory_service = MemoryService(settings, repo, vector_store, self.openai_service)
         self.linking = LinkingAgent(settings, repo, vector_store, self.rag_service)
         self.query_agent = QueryAgent(
@@ -107,7 +109,7 @@ class KnowledgePipeline:
                 "tags": document["tags"],
                 "summary": document["summary"],
                 "related": self.repo.list_links(document["id"]),
-                "graph": {"nodes": [{"id": document["id"], "title": document["title"], "category": document["category"]}], "edges": []},
+                "graph": self._document_graph_response(document),
                 "logs": state.logs + ["orchestrator: 命中去重，直接返回已有文档。"],
             }
         return {
@@ -181,6 +183,7 @@ class KnowledgePipeline:
         graph.add_node("agent_classification", self.classification.run)
         graph.add_node("agent_summary", self.summary.run)
         graph.add_node("persist", self._persist_document)
+        graph.add_node("agent_graph", self._extract_graph)
         graph.add_node("agent_linking", self.linking.run)
 
         graph.set_entry_point("agent_acquisition")
@@ -197,7 +200,8 @@ class KnowledgePipeline:
         graph.add_edge("agent_chunking", "agent_classification")
         graph.add_edge("agent_classification", "agent_summary")
         graph.add_edge("agent_summary", "persist")
-        graph.add_edge("persist", "agent_linking")
+        graph.add_edge("persist", "agent_graph")
+        graph.add_edge("agent_graph", "agent_linking")
         graph.add_edge("agent_linking", END)
         return graph.compile()
 
@@ -229,3 +233,22 @@ class KnowledgePipeline:
             f"persist: 已写入 SQLite 元数据仓库、{len(state.sections)} 个 section 和 {len(state.chunks)} 个 chunk。"
         )
         return state
+
+    def _extract_graph(self, state: PipelineState) -> PipelineState:
+        document = self.repo.get_document(state.document_id)
+        if not document:
+            return state
+        result = self.graph_service.build_for_document(document=document, chunks=state.chunks)
+        state.graph = self.graph_service.graph_view(state.document_id)
+        state.logs.append(
+            f"graph: 已抽取 {len(result['entities'])} 个实体和 {len(result['edges'])} 条关系。"
+        )
+        return state
+
+    def _document_graph_response(self, document: dict) -> dict:
+        graph = self.graph_service.graph_view(document["id"])
+        graph["nodes"].insert(
+            0,
+            {"id": document["id"], "title": document["title"], "category": document["category"], "type": "document"},
+        )
+        return graph

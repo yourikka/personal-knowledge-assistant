@@ -33,6 +33,9 @@ class Settings:
     rag_document_top_k: int = int(os.getenv("RAG_DOCUMENT_TOP_K", "4"))
     rag_section_top_k: int = int(os.getenv("RAG_SECTION_TOP_K", "8"))
     rag_section_chunk_limit: int = int(os.getenv("RAG_SECTION_CHUNK_LIMIT", "4"))
+    graph_enabled: bool = os.getenv("GRAPH_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    graph_query_top_k: int = int(os.getenv("GRAPH_QUERY_TOP_K", "6"))
+    graph_min_entity_length: int = int(os.getenv("GRAPH_MIN_ENTITY_LENGTH", "2"))
     memory_enabled: bool = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     memory_top_k: int = int(os.getenv("MEMORY_TOP_K", "5"))
     memory_min_score: float = float(os.getenv("MEMORY_MIN_SCORE", "0.12"))
