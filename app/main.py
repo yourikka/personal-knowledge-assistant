@@ -25,7 +25,10 @@ from .models import (
     IngestResponse,
     JobResponse,
     MemoryResponse,
+    DocumentClickRequest,
+    PersonalizationEventResponse,
     QueryRequest,
+    QueryFeedbackRequest,
     QueryResponse,
     ReindexDocumentResponse,
     ReindexResponse,
@@ -156,6 +159,32 @@ def query_knowledge(request: QueryRequest) -> QueryResponse:
         return QueryResponse(session_id=request.session_id, **result)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"检索失败：{error}") from error
+
+
+@app.post("/api/personalization/clicks", response_model=PersonalizationEventResponse)
+def record_document_click(request: DocumentClickRequest) -> PersonalizationEventResponse:
+    if not repo.get_document(request.document_id):
+        raise HTTPException(status_code=404, detail="文档不存在。")
+    pipeline.personalization_service.record_click(
+        session_id=request.session_id,
+        document_id=request.document_id,
+        query=request.query,
+    )
+    return PersonalizationEventResponse(status="ok")
+
+
+@app.post("/api/personalization/feedback", response_model=PersonalizationEventResponse)
+def record_query_feedback(request: QueryFeedbackRequest) -> PersonalizationEventResponse:
+    if request.document_id and not repo.get_document(request.document_id):
+        raise HTTPException(status_code=404, detail="文档不存在。")
+    pipeline.personalization_service.record_feedback(
+        session_id=request.session_id,
+        query=request.query,
+        rating=request.rating,
+        document_id=request.document_id,
+        comment=request.comment,
+    )
+    return PersonalizationEventResponse(status="ok")
 
 
 @app.get("/api/memories", response_model=list[MemoryResponse])

@@ -174,6 +174,35 @@ class KnowledgeRepository:
                     FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS user_query_profiles (
+                    session_id TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    weight REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (session_id, tag)
+                );
+
+                CREATE TABLE IF NOT EXISTS document_click_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS query_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    document_id TEXT,
+                    rating INTEGER NOT NULL,
+                    comment TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id, chunk_index);
                 CREATE INDEX IF NOT EXISTS idx_document_sections_document_id ON document_sections(document_id, section_index);
@@ -191,6 +220,9 @@ class KnowledgeRepository:
                     ON jobs(idempotency_key)
                     WHERE idempotency_key IS NOT NULL;
                 CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id, id ASC);
+                CREATE INDEX IF NOT EXISTS idx_user_query_profiles_session ON user_query_profiles(session_id, weight DESC);
+                CREATE INDEX IF NOT EXISTS idx_document_click_events_session ON document_click_events(session_id, document_id);
+                CREATE INDEX IF NOT EXISTS idx_query_feedback_session ON query_feedback(session_id, created_at DESC);
                 """
             )
             self._ensure_memory_columns(conn)
@@ -870,6 +902,80 @@ class KnowledgeRepository:
                 (json.dumps({}, ensure_ascii=False), now, job_id),
             )
         return cursor.rowcount == 1
+
+    def record_query_profile(self, session_id: str, tags: list[str], weight: float = 1.0) -> None:
+        if not session_id or not tags:
+            return
+        now = utc_now()
+        with self.connect() as conn:
+            for tag in tags:
+                clean_tag = tag.strip().lower()
+                if not clean_tag:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO user_query_profiles(session_id, tag, weight, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id, tag) DO UPDATE SET
+                        weight = user_query_profiles.weight + excluded.weight,
+                        updated_at = excluded.updated_at
+                    """,
+                    (session_id, clean_tag, weight, now, now),
+                )
+
+    def list_query_profile(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM user_query_profiles
+                WHERE session_id = ?
+                ORDER BY weight DESC, updated_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_document_click(self, session_id: str, document_id: str, query: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO document_click_events(session_id, document_id, query, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (session_id, document_id, query, utc_now()),
+            )
+
+    def record_query_feedback(
+        self,
+        session_id: str,
+        query: str,
+        rating: int,
+        document_id: str | None = None,
+        comment: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO query_feedback(session_id, query, document_id, rating, comment, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, query, document_id, int(rating), comment, utc_now()),
+            )
+
+    def document_click_counts(self, session_id: str) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT document_id, COUNT(*) AS count
+                FROM document_click_events
+                WHERE session_id = ?
+                GROUP BY document_id
+                """,
+                (session_id,),
+            ).fetchall()
+        return {row["document_id"]: int(row["count"]) for row in rows}
 
     def replace_document_graph(
         self,

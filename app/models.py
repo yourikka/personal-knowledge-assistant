@@ -22,6 +22,24 @@ class QueryRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=1)
 
 
+class DocumentClickRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    query: str = Field(default="", max_length=1000)
+
+
+class QueryFeedbackRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+    rating: int = Field(ge=-1, le=1)
+    document_id: str | None = Field(default=None, min_length=1)
+    comment: str | None = Field(default=None, max_length=1000)
+
+
+class PersonalizationEventResponse(BaseModel):
+    status: str
+
+
 class DocumentResponse(BaseModel):
     id: str
     title: str

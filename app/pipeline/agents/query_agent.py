@@ -4,6 +4,7 @@ from app.config import Settings
 from app.db import KnowledgeRepository
 from app.services.memory_service import MemoryService
 from app.services.openai_client import OpenAIService
+from app.services.personalization_service import PersonalizationService
 from app.services.rag_service import RAGService
 from app.services.self_check_service import SelfCheckService
 from app.services.vector_store import VectorStore
@@ -19,6 +20,7 @@ class QueryAgent:
         rag_service: RAGService | None = None,
         memory_service: MemoryService | None = None,
         self_check: SelfCheckService | None = None,
+        personalization_service: PersonalizationService | None = None,
     ) -> None:
         self.settings = settings
         self.repo = repo
@@ -27,6 +29,7 @@ class QueryAgent:
         self.rag_service = rag_service or RAGService(settings, repo, vector_store, openai_service)
         self.memory_service = memory_service
         self.self_check = self_check
+        self.personalization_service = personalization_service
 
     def run(self, query: str, top_k: int, session_id: str | None = None) -> dict:
         logs = ["query: 已开始执行 RAG 检索。"]
@@ -34,6 +37,8 @@ class QueryAgent:
         memories = self.memory_service.retrieve(query=query, session_id=session_id) if self.memory_service else []
         if self.memory_service:
             logs.append(f"memory: 已召回 {len(memories)} 条相关记忆。")
+        if self.personalization_service:
+            self.personalization_service.learn_query(session_id=session_id, query=query)
         retrieval = self.rag_service.retrieve(query=query, top_k=top_k, session_id=session_id)
         references = retrieval["references"]
         answer = self._compose_answer(

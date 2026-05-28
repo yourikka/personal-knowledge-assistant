@@ -17,6 +17,7 @@ from app.services.openai_client import OpenAIService
 from app.services.rag_service import RAGService
 from app.services.chunking import DocumentChunker
 from app.services.graph_service import GraphExtractionService
+from app.services.personalization_service import PersonalizationService
 from app.services.self_check_service import SelfCheckService
 from app.services.vector_store import VectorStore
 
@@ -39,10 +40,18 @@ class KnowledgePipeline:
             max_chars=settings.chunk_max_chars,
         )
         self.self_check = SelfCheckService(settings)
+        self.personalization_service = PersonalizationService(settings, repo)
         self.classification = ClassificationAgent(self.openai_service, self.self_check)
         self.summary = SummaryAgent(self.openai_service, self.self_check)
         self.graph_service = GraphExtractionService(settings, repo)
-        self.rag_service = RAGService(settings, repo, vector_store, self.openai_service, self.graph_service)
+        self.rag_service = RAGService(
+            settings,
+            repo,
+            vector_store,
+            self.openai_service,
+            self.graph_service,
+            self.personalization_service,
+        )
         self.memory_service = MemoryService(settings, repo, vector_store, self.openai_service)
         self.linking = LinkingAgent(settings, repo, vector_store, self.rag_service)
         self.query_agent = QueryAgent(
@@ -53,6 +62,7 @@ class KnowledgePipeline:
             self.rag_service,
             self.memory_service,
             self.self_check,
+            self.personalization_service,
         )
         self.image_generation_agent = ImageGenerationAgent(settings, self.openai_service)
         self.ingest_graph = self._build_ingest_graph()

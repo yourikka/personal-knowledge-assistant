@@ -24,6 +24,7 @@
 - 支持异步入库任务：提交后返回 `job_id`，后台执行，支持状态查询、取消和失败重试
 - 支持单文档增量重建索引：只刷新目标文档的切片、section、向量、图谱和关联链接
 - 支持 Agent 自检：摘要、分类、问答引用会经过本地规则校验和安全修正
+- 支持个性化检索：按 session 查询画像、点击记录和反馈动态调整召回排序
 
 ## 项目结构
 
@@ -40,6 +41,7 @@
 - `app/services/graph_service.py`：实体抽取、关系构建和图谱增强召回
 - `app/services/job_service.py`：单机异步任务队列、状态追踪和失败重试
 - `app/services/self_check_service.py`：摘要、分类和问答引用自检
+- `app/services/personalization_service.py`：查询画像、点击记录和个性化排序加权
 - `app/services/memory_service.py`：会话记忆召回、格式化、提炼和向量索引
 - `app/services/vector_store.py`：Chroma / 本地向量检索适配
 - `app/static/`：知识入库、文档内容查看、切片、检索和文档管理 Web 前端
@@ -281,6 +283,7 @@ GRAPH_ENABLED=true
 GRAPH_QUERY_TOP_K=6
 GRAPH_MIN_ENTITY_LENGTH=2
 SELF_CHECK_ENABLED=true
+PERSONALIZATION_BOOST=0.08
 MEMORY_ENABLED=true
 MEMORY_TOP_K=5
 MEMORY_MIN_SCORE=0.12

@@ -8,6 +8,7 @@ from app.config import Settings
 from app.db import KnowledgeRepository
 from app.services.graph_service import GraphExtractionService
 from app.services.openai_client import OpenAIService
+from app.services.personalization_service import PersonalizationService
 from app.services.text_utils import extract_keywords, overlap_score, tokenize
 from app.services.vector_store import VectorStore
 
@@ -20,12 +21,14 @@ class RAGService:
         vector_store: VectorStore,
         openai_service: OpenAIService,
         graph_service: GraphExtractionService | None = None,
+        personalization_service: PersonalizationService | None = None,
     ) -> None:
         self.settings = settings
         self.repo = repo
         self.vector_store = vector_store
         self.openai_service = openai_service
         self.graph_service = graph_service
+        self.personalization_service = personalization_service
 
     def retrieve(
         self,
@@ -42,7 +45,7 @@ class RAGService:
         candidates = self._collect_candidates(expanded_queries, candidate_limit, exclude_ids or set())
         logs.append(f"rag: 多路召回候选 {len(candidates)} 条。")
 
-        ranked = self._rerank(query=query, candidates=candidates)
+        ranked = self._rerank(query=query, candidates=candidates, session_id=session_id)
         filtered = [item for item in ranked if item["score"] >= self.settings.rag_min_score]
         selected = self._mmr_select(query=query, candidates=filtered, top_k=top_k)
         references, context = self._build_context(selected)
@@ -265,7 +268,12 @@ class RAGService:
             if chunk["char_start"] < section["char_end"] and chunk["char_end"] > section["char_start"]
         ]
 
-    def _rerank(self, query: str, candidates: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    def _rerank(
+        self,
+        query: str,
+        candidates: dict[str, dict[str, Any]],
+        session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         query_tags = set(tokenize(query))
         ranked = []
         for chunk_id, entry in candidates.items():
@@ -277,6 +285,7 @@ class RAGService:
             tag_score = self._tag_score(query_tags, document.get("tags", []))
             recent_score = self._recent_score(document.get("created_at", ""))
             signal_score = self._signal_score(entry["signals"])
+            personalization_score = self._personalization_score(session_id=session_id, document=document)
 
             score = (
                 semantic_score * 0.46
@@ -284,6 +293,7 @@ class RAGService:
                 + signal_score * 0.18
                 + tag_score * self.settings.rag_tag_boost
                 + recent_score * self.settings.rag_recent_boost
+                + personalization_score * self.settings.personalization_boost
             )
             ranked.append(
                 {
@@ -295,6 +305,7 @@ class RAGService:
                     "lexical_score": round(lexical_score, 4),
                     "tag_score": round(tag_score, 4),
                     "recent_score": round(recent_score, 4),
+                    "personalization_score": round(personalization_score, 4),
                     "signals": entry["signals"],
                     "text": text,
                 }
@@ -364,6 +375,7 @@ class RAGService:
                     "source_uri": document["source_uri"],
                     "score": item["score"],
                     "mmr_score": item.get("mmr_score", item["score"]),
+                    "personalization_score": item.get("personalization_score", 0.0),
                     "signals": item["signals"][:5],
                 }
             )
@@ -409,3 +421,8 @@ class RAGService:
             weighted += float(signal["score"]) * weight
             total += weight
         return min(1.0, weighted / max(total, 1e-9))
+
+    def _personalization_score(self, session_id: str | None, document: dict[str, Any]) -> float:
+        if not self.personalization_service:
+            return 0.0
+        return self.personalization_service.score_document(session_id=session_id, document=document)
