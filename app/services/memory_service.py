@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from typing import Any
 
 from app.config import Settings
@@ -51,7 +52,9 @@ class MemoryService:
                 candidates[memory["id"]] = {**memory, "score": round(score, 4), "signal": "keyword"}
 
         ranked = sorted(candidates.values(), key=lambda item: item["score"], reverse=True)
-        return ranked[:limit]
+        selected = ranked[:limit]
+        self.repo.touch_memory_access([memory["id"] for memory in selected])
+        return selected
 
     def format_context(self, memories: list[dict[str, Any]]) -> str:
         if not memories:
@@ -59,7 +62,7 @@ class MemoryService:
         blocks = []
         for index, memory in enumerate(memories, start=1):
             tags = ", ".join(memory.get("tags", [])) or "无"
-            scope = "全局" if memory.get("session_id") is None else f"会话 {memory['session_id']}"
+            scope = memory.get("scope") or ("user" if memory.get("session_id") is None else "session")
             blocks.append(
                 f"[M{index}] 类型: {memory['kind']}\n"
                 f"范围: {scope}\n"
@@ -90,22 +93,29 @@ class MemoryService:
             if not content:
                 continue
             kind = self._normalize_kind(str(memory.get("kind") or "fact"))
+            scope = self._normalize_scope(str(memory.get("scope") or self._scope_for_kind(kind)))
             importance = self._normalize_importance(memory.get("importance", 0.5))
             tags = memory.get("tags") or extract_keywords(content, limit=5)
             if not isinstance(tags, list):
                 tags = extract_keywords(content, limit=5)
+            conflict_key = self._conflict_key(scope=scope, kind=kind, tags=tags, content=content)
             record = {
                 "id": self._memory_id(session_id=session_id, kind=kind, content=content),
-                "session_id": session_id,
+                "session_id": session_id if scope == "session" else None,
+                "scope": scope,
                 "kind": kind,
                 "content": content[: self.settings.memory_max_content_chars],
                 "importance": importance,
                 "tags": [str(item).strip() for item in tags if str(item).strip()][:5],
+                "ttl_seconds": memory.get("ttl_seconds"),
+                "conflict_key": conflict_key,
+                "status": "active",
                 "metadata": {
                     "source": "chat_turn",
                     "reference_ids": [item.get("id") for item in references[:5] if item.get("id")],
                 },
             }
+            self.repo.supersede_conflicting_memories(conflict_key, keep_id=record["id"])
             self.repo.upsert_memory(record)
             self._index_memory(record)
             stored.append(record)
@@ -130,6 +140,7 @@ class MemoryService:
                     "不要保存临时问题、寒暄、一次性命令、模型回答格式要求、引用编号或无法确认的猜测。"
                     "每条记忆包含 content、kind、importance、tags。"
                     "kind 只能是 preference、goal、decision、fact、project。"
+                    "可选字段 scope 只能是 session、user、project；偏好默认 user，项目决策默认 project。"
                     "importance 是 0 到 1 的数字。tags 是 1 到 5 个短标签。"
                     "最多返回 3 条；没有值得保存的信息时返回空数组。"
                 ),
@@ -153,6 +164,7 @@ class MemoryService:
             {
                 "content": query[: self.settings.memory_max_content_chars],
                 "kind": "preference",
+                "scope": "user",
                 "importance": 0.72,
                 "tags": extract_keywords(query, limit=5),
             }
@@ -165,6 +177,7 @@ class MemoryService:
             metadata={
                 "session_id": memory.get("session_id") or "",
                 "kind": "memory",
+                "scope": memory.get("scope", "session"),
                 "memory_kind": memory["kind"],
                 "importance": float(memory.get("importance", 0.5)),
             },
@@ -176,8 +189,29 @@ class MemoryService:
         return retrieval_score * 0.62 + lexical * 0.18 + importance * 0.20
 
     def _visible_in_session(self, memory: dict[str, Any], session_id: str | None) -> bool:
+        if memory.get("status", "active") != "active":
+            return False
+        if self._expired(memory):
+            return False
+        scope = memory.get("scope", "session")
+        if scope in {"user", "project"}:
+            return True
         memory_session = memory.get("session_id")
         return memory_session is None or bool(session_id and memory_session == session_id)
+
+    def _expired(self, memory: dict[str, Any]) -> bool:
+        ttl_seconds = memory.get("ttl_seconds")
+        if ttl_seconds is None:
+            return False
+        try:
+            ttl = int(ttl_seconds)
+            created = datetime.fromisoformat(memory["created_at"])
+        except (TypeError, ValueError):
+            return False
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - created).total_seconds()
+        return age > ttl
 
     def _memory_id(self, session_id: str, kind: str, content: str) -> str:
         digest = hashlib.sha256(f"{session_id}:{kind}:{content.strip()}".encode("utf-8")).hexdigest()[:24]
@@ -186,6 +220,22 @@ class MemoryService:
     def _normalize_kind(self, value: str) -> str:
         allowed = {"preference", "goal", "decision", "fact", "project"}
         return value if value in allowed else "fact"
+
+    def _normalize_scope(self, value: str) -> str:
+        allowed = {"session", "user", "project"}
+        return value if value in allowed else "session"
+
+    def _scope_for_kind(self, kind: str) -> str:
+        if kind == "preference":
+            return "user"
+        if kind in {"project", "decision", "goal"}:
+            return "project"
+        return "session"
+
+    def _conflict_key(self, scope: str, kind: str, tags: list[Any], content: str) -> str:
+        normalized_tags = [str(tag).strip().lower() for tag in tags if str(tag).strip()]
+        key_part = normalized_tags[0] if normalized_tags else content.strip().lower()[:40]
+        return f"{scope}:{kind}:{key_part}"
 
     def _normalize_importance(self, value: Any) -> float:
         try:

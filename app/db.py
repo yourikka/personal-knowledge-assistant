@@ -95,11 +95,16 @@ class KnowledgeRepository:
                 CREATE TABLE IF NOT EXISTS memory_records (
                     id TEXT PRIMARY KEY,
                     session_id TEXT,
+                    scope TEXT NOT NULL DEFAULT 'session',
                     kind TEXT NOT NULL,
                     content TEXT NOT NULL,
                     importance REAL NOT NULL,
                     tags_json TEXT NOT NULL,
                     metadata_json TEXT NOT NULL,
+                    ttl_seconds INTEGER,
+                    last_accessed_at TEXT,
+                    conflict_key TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -110,8 +115,24 @@ class KnowledgeRepository:
                 CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id ON chat_turns(session_id, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_session_id ON memory_records(session_id, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_kind ON memory_records(kind, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_memory_records_scope ON memory_records(scope, status, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_memory_records_conflict_key ON memory_records(conflict_key, status);
                 """
             )
+            self._ensure_memory_columns(conn)
+
+    def _ensure_memory_columns(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(memory_records)").fetchall()}
+        migrations = {
+            "scope": "ALTER TABLE memory_records ADD COLUMN scope TEXT NOT NULL DEFAULT 'session'",
+            "ttl_seconds": "ALTER TABLE memory_records ADD COLUMN ttl_seconds INTEGER",
+            "last_accessed_at": "ALTER TABLE memory_records ADD COLUMN last_accessed_at TEXT",
+            "conflict_key": "ALTER TABLE memory_records ADD COLUMN conflict_key TEXT",
+            "status": "ALTER TABLE memory_records ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                conn.execute(statement)
 
     def get_document_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -453,29 +474,75 @@ class KnowledgeRepository:
             conn.execute(
                 """
                 INSERT INTO memory_records(
-                    id, session_id, kind, content, importance, tags_json, metadata_json, created_at, updated_at
+                    id, session_id, scope, kind, content, importance, tags_json, metadata_json,
+                    ttl_seconds, last_accessed_at, conflict_key, status, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
+                    scope = excluded.scope,
                     kind = excluded.kind,
                     content = excluded.content,
                     importance = excluded.importance,
                     tags_json = excluded.tags_json,
                     metadata_json = excluded.metadata_json,
+                    ttl_seconds = excluded.ttl_seconds,
+                    conflict_key = excluded.conflict_key,
+                    status = excluded.status,
                     updated_at = excluded.updated_at
                 """,
                 (
                     record["id"],
                     record.get("session_id"),
+                    record.get("scope", "session"),
                     record["kind"],
                     record["content"],
                     float(record.get("importance", 0.5)),
                     json.dumps(record.get("tags", []), ensure_ascii=False),
                     json.dumps(record.get("metadata", {}), ensure_ascii=False),
+                    record.get("ttl_seconds"),
+                    record.get("last_accessed_at"),
+                    record.get("conflict_key"),
+                    record.get("status", "active"),
                     record.get("created_at", now),
                     now,
                 ),
+            )
+
+    def supersede_conflicting_memories(self, conflict_key: str, keep_id: str | None = None) -> int:
+        if not conflict_key:
+            return 0
+        now = utc_now()
+        with self.connect() as conn:
+            if keep_id:
+                cursor = conn.execute(
+                    """
+                    UPDATE memory_records
+                    SET status = 'superseded', updated_at = ?
+                    WHERE conflict_key = ? AND id != ? AND status = 'active'
+                    """,
+                    (now, conflict_key, keep_id),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE memory_records
+                    SET status = 'superseded', updated_at = ?
+                    WHERE conflict_key = ? AND status = 'active'
+                    """,
+                    (now, conflict_key),
+                )
+        return int(cursor.rowcount)
+
+    def touch_memory_access(self, memory_ids: list[str]) -> None:
+        if not memory_ids:
+            return
+        now = utc_now()
+        placeholders = ",".join("?" for _ in memory_ids)
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE memory_records SET last_accessed_at = ? WHERE id IN ({placeholders})",
+                (now, *memory_ids),
             )
 
     def get_memory(self, memory_id: str) -> dict[str, Any] | None:
@@ -495,7 +562,8 @@ class KnowledgeRepository:
                     """
                     SELECT *
                     FROM memory_records
-                    WHERE session_id = ? OR session_id IS NULL
+                    WHERE (session_id = ? OR session_id IS NULL)
+                      AND status = 'active'
                     ORDER BY importance DESC, updated_at DESC
                     LIMIT ?
                     """,
@@ -507,6 +575,7 @@ class KnowledgeRepository:
                     SELECT *
                     FROM memory_records
                     WHERE session_id = ?
+                      AND status = 'active'
                     ORDER BY importance DESC, updated_at DESC
                     LIMIT ?
                     """,
@@ -517,6 +586,7 @@ class KnowledgeRepository:
                     """
                     SELECT *
                     FROM memory_records
+                    WHERE status = 'active'
                     ORDER BY importance DESC, updated_at DESC
                     LIMIT ?
                     """,
@@ -545,6 +615,7 @@ class KnowledgeRepository:
                         SELECT *
                         FROM memory_records
                         WHERE (session_id = ? OR session_id IS NULL)
+                          AND status = 'active'
                           AND (lower(content) LIKE ? OR lower(tags_json) LIKE ?)
                         ORDER BY importance DESC, updated_at DESC
                         LIMIT ?
@@ -557,6 +628,7 @@ class KnowledgeRepository:
                         SELECT *
                         FROM memory_records
                         WHERE session_id = ?
+                          AND status = 'active'
                           AND (lower(content) LIKE ? OR lower(tags_json) LIKE ?)
                         ORDER BY importance DESC, updated_at DESC
                         LIMIT ?
@@ -568,7 +640,8 @@ class KnowledgeRepository:
                         """
                         SELECT *
                         FROM memory_records
-                        WHERE lower(content) LIKE ? OR lower(tags_json) LIKE ?
+                        WHERE status = 'active'
+                          AND (lower(content) LIKE ? OR lower(tags_json) LIKE ?)
                         ORDER BY importance DESC, updated_at DESC
                         LIMIT ?
                         """,
@@ -635,11 +708,16 @@ class KnowledgeRepository:
         return {
             "id": row["id"],
             "session_id": row["session_id"],
+            "scope": row["scope"],
             "kind": row["kind"],
             "content": row["content"],
             "importance": row["importance"],
             "tags": json.loads(row["tags_json"]),
             "metadata": json.loads(row["metadata_json"]),
+            "ttl_seconds": row["ttl_seconds"],
+            "last_accessed_at": row["last_accessed_at"],
+            "conflict_key": row["conflict_key"],
+            "status": row["status"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

@@ -76,11 +76,16 @@ class QueryResponse(BaseModel):
 class MemoryResponse(BaseModel):
     id: str
     session_id: str | None = None
+    scope: str = "session"
     kind: str
     content: str
     importance: float
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    ttl_seconds: int | None = None
+    last_accessed_at: str | None = None
+    conflict_key: str | None = None
+    status: str = "active"
     created_at: str
     updated_at: str
 

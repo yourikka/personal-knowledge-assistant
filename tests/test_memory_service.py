@@ -96,7 +96,33 @@ def test_query_pipeline_writes_rule_based_memory(tmp_path):
     memories = repo.list_memories(session_id="web-session")
     assert result["memories"] == []
     assert len(memories) == 1
+    assert memories[0]["scope"] == "user"
+    assert memories[0]["session_id"] is None
     assert "中文简洁回答" in memories[0]["content"]
+
+
+def test_memory_service_supersedes_conflicting_memories(tmp_path):
+    _, repo, _, service = build_memory_service(tmp_path)
+
+    first = service.learn_from_turn(
+        query="记住：我希望默认用中文简洁回答。",
+        answer="已记录。",
+        session_id="s1",
+        references=[],
+    )
+    second = service.learn_from_turn(
+        query="记住：我希望默认用英文简洁回答。",
+        answer="已记录。",
+        session_id="s1",
+        references=[],
+    )
+
+    all_memories = repo.list_memories(limit=10, include_global=True)
+    assert first
+    assert second
+    assert len(all_memories) == 1
+    assert all_memories[0]["status"] == "active"
+    assert "英文简洁回答" in all_memories[0]["content"]
 
 
 def test_query_pipeline_can_answer_from_memory_without_documents(tmp_path):
