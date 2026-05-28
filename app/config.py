@@ -36,6 +36,7 @@ class Settings:
     graph_enabled: bool = os.getenv("GRAPH_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     graph_query_top_k: int = int(os.getenv("GRAPH_QUERY_TOP_K", "6"))
     graph_min_entity_length: int = int(os.getenv("GRAPH_MIN_ENTITY_LENGTH", "2"))
+    self_check_enabled: bool = os.getenv("SELF_CHECK_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     memory_enabled: bool = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     memory_top_k: int = int(os.getenv("MEMORY_TOP_K", "5"))
     memory_min_score: float = float(os.getenv("MEMORY_MIN_SCORE", "0.12"))

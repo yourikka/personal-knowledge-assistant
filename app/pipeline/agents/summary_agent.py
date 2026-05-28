@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from app.models import PipelineState
 from app.services.openai_client import OpenAIService
+from app.services.self_check_service import SelfCheckService
 from app.services.text_utils import summarize_text
 
 
 class SummaryAgent:
-    def __init__(self, openai_service: OpenAIService) -> None:
+    def __init__(self, openai_service: OpenAIService, self_check: SelfCheckService | None = None) -> None:
         self.openai_service = openai_service
+        self.self_check = self_check
 
     def run(self, state: PipelineState) -> PipelineState:
         summary = summarize_text(state.cleaned_text, min_chars=100, max_chars=200)
@@ -31,6 +33,9 @@ class SummaryAgent:
                 summary = str(result["summary"]).strip()
         if not summary:
             summary = state.cleaned_text[:180]
+        if self.self_check:
+            summary, check_logs = self.self_check.check_summary(summary, state.cleaned_text)
+            state.logs.extend(check_logs)
         state.summary = summary
         state.logs.append(
             "summary: 已完成摘要提取。"

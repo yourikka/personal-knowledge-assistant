@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from app.services.openai_client import OpenAIService
 from app.models import PipelineState
+from app.services.self_check_service import SelfCheckService
 from app.services.text_utils import classify_text, extract_keywords
 
 
 class ClassificationAgent:
-    def __init__(self, openai_service: OpenAIService) -> None:
+    def __init__(self, openai_service: OpenAIService, self_check: SelfCheckService | None = None) -> None:
         self.openai_service = openai_service
+        self.self_check = self_check
 
     def run(self, state: PipelineState) -> PipelineState:
         category, confidence = classify_text(state.cleaned_text)
@@ -35,8 +37,17 @@ class ClassificationAgent:
                 candidate_tags = result.get("tags") or tags
                 if isinstance(candidate_tags, list):
                     tags = [str(item).strip() for item in candidate_tags if str(item).strip()][:5]
+        confidence = max(confidence, 0.7 if tags else confidence)
+        if self.self_check:
+            category, confidence, tags, check_logs = self.self_check.check_classification(
+                category=category,
+                confidence=confidence,
+                tags=tags,
+                source_text=state.cleaned_text,
+            )
+            state.logs.extend(check_logs)
         state.category = category
-        state.confidence = max(confidence, 0.7 if tags else confidence)
+        state.confidence = confidence
         state.tags = tags[:5]
         state.logs.append(
             "classification: 已完成主题分类与标签生成。"

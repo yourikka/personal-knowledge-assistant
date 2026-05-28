@@ -5,6 +5,7 @@ from app.db import KnowledgeRepository
 from app.services.memory_service import MemoryService
 from app.services.openai_client import OpenAIService
 from app.services.rag_service import RAGService
+from app.services.self_check_service import SelfCheckService
 from app.services.vector_store import VectorStore
 
 
@@ -17,6 +18,7 @@ class QueryAgent:
         openai_service: OpenAIService,
         rag_service: RAGService | None = None,
         memory_service: MemoryService | None = None,
+        self_check: SelfCheckService | None = None,
     ) -> None:
         self.settings = settings
         self.repo = repo
@@ -24,6 +26,7 @@ class QueryAgent:
         self.openai_service = openai_service
         self.rag_service = rag_service or RAGService(settings, repo, vector_store, openai_service)
         self.memory_service = memory_service
+        self.self_check = self_check
 
     def run(self, query: str, top_k: int, session_id: str | None = None) -> dict:
         logs = ["query: 已开始执行 RAG 检索。"]
@@ -41,6 +44,9 @@ class QueryAgent:
             history=history,
             memories=memories,
         )
+        if self.self_check:
+            answer, check_logs = self.self_check.check_answer(answer, references)
+            logs.extend(check_logs)
         logs.extend(retrieval["logs"])
         logs.append("query: 已完成 RAG 答案生成与引用拼装。")
 
