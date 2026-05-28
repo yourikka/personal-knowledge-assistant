@@ -118,17 +118,23 @@ def read_source_payload(source_type: str, source: str, enable_playwright: bool, 
 
 
 def parse_content(source_type: str, raw_bytes: bytes, metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    parsers = {
-        "html": parse_html,
-        "url": parse_html,
-        "markdown": parse_markdown,
-        "text": parse_plain_text,
-        "pdf": parse_pdf,
-        "image": parse_image_ocr,
-    }
-    parser = parsers.get(source_type, parse_plain_text)
-    text = parser(raw_bytes)
+    parser_metadata: dict[str, Any] = {}
+    if source_type == "pdf":
+        text, parser_metadata = parse_pdf_document(raw_bytes)
+    elif source_type == "image":
+        text, parser_metadata = parse_image_document(raw_bytes)
+    else:
+        parsers = {
+            "html": parse_html,
+            "url": parse_html,
+            "markdown": parse_markdown,
+            "text": parse_plain_text,
+        }
+        parser = parsers.get(source_type, parse_plain_text)
+        text = parser(raw_bytes)
+
     extra = extract_metadata_from_text(text)
+    extra.update(parser_metadata)
     extra["parsed_chars"] = len(text)
     extra["parser"] = source_type
     merged_metadata = {**metadata, **extra}
@@ -171,24 +177,107 @@ def parse_plain_text(raw_bytes: bytes) -> str:
 
 
 def parse_pdf(raw_bytes: bytes) -> str:
+    text, _ = parse_pdf_document(raw_bytes)
+    return text
+
+
+def parse_pdf_document(raw_bytes: bytes) -> tuple[str, dict[str, Any]]:
+    pages: list[str]
     if PdfReader is None:
-        return raw_bytes.decode("utf-8", errors="ignore")
-    try:
-        reader = PdfReader(io.BytesIO(raw_bytes))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n".join(pages)
-    except Exception:
-        return raw_bytes.decode("utf-8", errors="ignore")
+        pages = [raw_bytes.decode("utf-8", errors="ignore")]
+    else:
+        try:
+            reader = PdfReader(io.BytesIO(raw_bytes))
+            pages = [page.extract_text() or "" for page in reader.pages]
+        except Exception:
+            pages = [raw_bytes.decode("utf-8", errors="ignore")]
+
+    structured_pages = []
+    headings: list[str] = []
+    table_count = 0
+    for index, page_text in enumerate(pages, start=1):
+        structured, page_headings, page_tables = restore_document_structure(page_text)
+        headings.extend(page_headings)
+        table_count += page_tables
+        structured_pages.append(f"## Page {index}\n{structured}".strip())
+
+    text = "\n\n".join(page for page in structured_pages if page.strip())
+    return text, {
+        "page_count": len(pages),
+        "structure": {
+            "headings": headings[:20],
+            "table_count": table_count,
+            "layout": "page_heading_table_heuristic",
+        },
+    }
 
 
 def parse_image_ocr(raw_bytes: bytes) -> str:
+    text, _ = parse_image_document(raw_bytes)
+    return text
+
+
+def parse_image_document(raw_bytes: bytes) -> tuple[str, dict[str, Any]]:
+    metadata: dict[str, Any] = {
+        "ocr_enabled": bool(Image is not None and pytesseract is not None),
+        "ocr_languages": "chi_sim+eng",
+    }
     if Image is None or pytesseract is None:
-        return "OCR 未启用：缺少 Pillow 或 pytesseract。"
+        return "OCR 未启用：缺少 Pillow 或 pytesseract。", metadata
     try:
         image = Image.open(io.BytesIO(raw_bytes))
-        return pytesseract.image_to_string(image, lang="chi_sim+eng")
+        metadata.update(
+            {
+                "image_width": image.width,
+                "image_height": image.height,
+                "image_mode": image.mode,
+            }
+        )
+        text = pytesseract.image_to_string(image, lang="chi_sim+eng")
+        metadata["image_summary"] = f"图片尺寸 {image.width}x{image.height}，OCR 提取 {len(text.strip())} 字符。"
+        return f"[Image OCR]\n{text.strip()}".strip(), metadata
     except Exception:
-        return "OCR 识别失败。"
+        metadata["ocr_error"] = "OCR 识别失败。"
+        return "OCR 识别失败。", metadata
+
+
+def restore_document_structure(text: str) -> tuple[str, list[str], int]:
+    lines = [line.rstrip() for line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines()]
+    restored = []
+    headings = []
+    table_count = 0
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            restored.append("")
+            continue
+        if is_table_like_line(stripped):
+            columns = [part.strip() for part in re.split(r"\s{2,}|\t+", stripped) if part.strip()]
+            if len(columns) >= 2:
+                restored.append("| " + " | ".join(columns) + " |")
+                table_count += 1
+                continue
+        if is_heading_like_line(stripped, next_line=lines[index + 1].strip() if index + 1 < len(lines) else ""):
+            heading = stripped.lstrip("# ").strip()
+            headings.append(heading)
+            restored.append(f"# {heading}")
+            continue
+        restored.append(stripped)
+    return "\n".join(restored), headings, table_count
+
+
+def is_table_like_line(line: str) -> bool:
+    return bool(re.search(r"\S\s{2,}\S", line) or "\t" in line)
+
+
+def is_heading_like_line(line: str, next_line: str = "") -> bool:
+    if line.startswith("#"):
+        return True
+    if len(line) > 80 or line.endswith(("。", ".", "！", "？", ";", "；", "：", ":")):
+        return False
+    if re.match(r"^\d+(\.\d+)*\s+\S+", line):
+        return True
+    return bool(next_line and len(next_line) > len(line) * 1.8)
 
 
 def extract_metadata_from_text(text: str) -> dict[str, Any]:

@@ -25,6 +25,7 @@
 - 支持单文档增量重建索引：只刷新目标文档的切片、section、向量、图谱和关联链接
 - 支持 Agent 自检：摘要、分类、问答引用会经过本地规则校验和安全修正
 - 支持个性化检索：按 session 查询画像、点击记录和反馈动态调整召回排序
+- PDF/图片解析保留结构化元数据：页边界、标题候选、表格样式行、图片尺寸和 OCR 状态
 
 ## 项目结构
 
@@ -34,7 +35,7 @@
 - `app/models.py`：请求、响应和流水线状态模型
 - `app/pipeline/orchestrator.py`：LangGraph 编排器
 - `app/pipeline/agents/`：各 Agent 实现
-- `app/services/parser_utils.py`：网页、PDF、Markdown、图片解析
+- `app/services/parser_utils.py`：网页、PDF、Markdown、图片解析，含 PDF/图片结构化元数据恢复
 - `app/services/chunking.py`：文档切块策略，保留标题路径、字符范围和 overlap
 - `app/services/text_utils.py`：文本清洗、标签、摘要、向量工具
 - `app/services/embedding_service.py`：智谱 `embedding-3` / 本地回退向量生成
@@ -250,6 +251,7 @@ agent_acquisition
 - 支持会话历史和长期记忆写入 SQLite，用于多轮上下文增强
 - 支持单机异步入库任务，任务状态和事件写入 SQLite
 - 支持单文档 reindex，避免为了一个文档变更触发全库重建
+- PDF 解析会尽量恢复页边界、标题和表格行；图片解析会记录 OCR 状态、尺寸和图片摘要
 - OCR、Playwright、Chroma 都是可选能力，不会阻塞基础功能启动
 - 支持 `python scripts/smoke_test.py` 做基础回归测试
 - 支持 `python scripts/eval_rag.py` 做离线 RAG 质量评测
