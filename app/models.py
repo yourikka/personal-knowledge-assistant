@@ -137,6 +137,16 @@ class ReindexResponse(BaseModel):
     links_rebuilt: int
 
 
+class ReindexDocumentResponse(BaseModel):
+    status: str
+    document_id: str
+    chunks: int
+    sections: int
+    links_rebuilt: int
+    graph_nodes: int
+    graph_edges: int
+
+
 class DeleteDocumentResponse(BaseModel):
     status: str
     document_id: str

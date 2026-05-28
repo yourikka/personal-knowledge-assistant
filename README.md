@@ -22,6 +22,7 @@
 - 检索问答支持记忆系统：按会话召回相关记忆，回答后自动提炼用户偏好、目标、决策和稳定事实
 - 入库后抽取基础知识图谱：实体、实体关系、文档实体映射，并在 RAG 中作为图谱召回信号
 - 支持异步入库任务：提交后返回 `job_id`，后台执行，支持状态查询、取消和失败重试
+- 支持单文档增量重建索引：只刷新目标文档的切片、section、向量、图谱和关联链接
 
 ## 项目结构
 
@@ -112,6 +113,12 @@ curl -X POST http://127.0.0.1:8010/api/jobs/ingest \
 
 ```bash
 curl http://127.0.0.1:8010/api/jobs/{job_id}
+```
+
+### 单文档增量索引
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/knowledge/documents/{document_id}/reindex
 ```
 
 ### 查看文档切片
@@ -238,6 +245,7 @@ agent_acquisition
 - 支持调用生图 Agent 生成知识库封面图或概念图
 - 支持会话历史和长期记忆写入 SQLite，用于多轮上下文增强
 - 支持单机异步入库任务，任务状态和事件写入 SQLite
+- 支持单文档 reindex，避免为了一个文档变更触发全库重建
 - OCR、Playwright、Chroma 都是可选能力，不会阻塞基础功能启动
 - 支持 `python scripts/smoke_test.py` 做基础回归测试
 - 支持 `python scripts/eval_rag.py` 做离线 RAG 质量评测

@@ -131,24 +131,66 @@ class KnowledgePipeline:
         self.bootstrap()
         rebuilt = 0
         for document in self.repo.iter_documents():
-            retrieval = self.rag_service.retrieve(
-                query=f"{document['title']}\n{document['summary']}\n{' '.join(document['tags'])}\n{document['cleaned_text'][:2000]}",
-                top_k=self.linking.settings.related_top_k,
-                exclude_ids={document["id"]},
-            )
-            grouped: dict[str, dict] = {}
-            for item in retrieval["references"]:
-                current = grouped.get(item["id"])
-                if current is None or item["score"] > current["score"]:
-                    grouped[item["id"]] = item
-            related = []
-            for item in sorted(grouped.values(), key=lambda value: value["score"], reverse=True):
-                if item["score"] < self.linking.settings.related_score_threshold:
-                    continue
-                related.append({"target_id": item["id"], "score": item["score"]})
+            related = self._related_links_for_document(document)
             self.repo.replace_links(document["id"], related)
             rebuilt += len(related)
         return {"status": "ok", "documents": len(self.repo.iter_documents()), "links_rebuilt": rebuilt}
+
+    def reindex_document(self, document_id: str) -> dict:
+        document = self.repo.get_document(document_id)
+        if not document:
+            raise ValueError("文档不存在。")
+
+        old_chunk_ids = [chunk["id"] for chunk in self.repo.list_document_chunks(document_id)]
+        old_section_ids = [section["id"] for section in self.repo.list_document_sections(document_id)]
+        chunks = self.chunker.chunk(document_id=document_id, text=document["cleaned_text"])
+        sections = self.chunker.sections_from_chunks(document_id=document_id, chunks=chunks)
+
+        self.vector_store.delete_ids([document_id, *old_section_ids, *old_chunk_ids])
+        self.repo.replace_document_chunks(document_id, chunks)
+        self.repo.replace_document_sections(document_id, sections)
+
+        self.vector_store.add_document(
+            document_id=document_id,
+            text=document["cleaned_text"],
+            metadata={"title": document["title"], "category": document["category"]},
+        )
+        for section in sections:
+            self.vector_store.add_section(
+                section_id=section["id"],
+                text=section["text"],
+                metadata={
+                    "document_id": document_id,
+                    "section_index": section["section_index"],
+                    "heading": section["heading"],
+                    "title": document["title"],
+                    "category": document["category"],
+                },
+            )
+        for chunk in chunks:
+            self.vector_store.add_chunk(
+                chunk_id=chunk["id"],
+                text=chunk["text"],
+                metadata={
+                    "document_id": document_id,
+                    "chunk_index": chunk["chunk_index"],
+                    "title": document["title"],
+                    "category": document["category"],
+                },
+            )
+
+        graph = self.graph_service.build_for_document(document=document, chunks=chunks)
+        related = self._related_links_for_document(document)
+        self.repo.replace_links(document_id, related)
+        return {
+            "status": "ok",
+            "document_id": document_id,
+            "chunks": len(chunks),
+            "sections": len(sections),
+            "links_rebuilt": len(related),
+            "graph_nodes": len(graph["entities"]),
+            "graph_edges": len(graph["edges"]),
+        }
 
     def delete_document(self, document_id: str) -> dict:
         document = self.repo.get_document(document_id)
@@ -233,6 +275,24 @@ class KnowledgePipeline:
             f"persist: 已写入 SQLite 元数据仓库、{len(state.sections)} 个 section 和 {len(state.chunks)} 个 chunk。"
         )
         return state
+
+    def _related_links_for_document(self, document: dict) -> list[dict]:
+        retrieval = self.rag_service.retrieve(
+            query=f"{document['title']}\n{document['summary']}\n{' '.join(document['tags'])}\n{document['cleaned_text'][:2000]}",
+            top_k=self.linking.settings.related_top_k,
+            exclude_ids={document["id"]},
+        )
+        grouped: dict[str, dict] = {}
+        for item in retrieval["references"]:
+            current = grouped.get(item["id"])
+            if current is None or item["score"] > current["score"]:
+                grouped[item["id"]] = item
+        related = []
+        for item in sorted(grouped.values(), key=lambda value: value["score"], reverse=True):
+            if item["score"] < self.linking.settings.related_score_threshold:
+                continue
+            related.append({"target_id": item["id"], "score": item["score"]})
+        return related
 
     def _extract_graph(self, state: PipelineState) -> PipelineState:
         document = self.repo.get_document(state.document_id)

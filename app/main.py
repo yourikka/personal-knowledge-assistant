@@ -27,6 +27,7 @@ from .models import (
     MemoryResponse,
     QueryRequest,
     QueryResponse,
+    ReindexDocumentResponse,
     ReindexResponse,
 )
 from .pipeline.orchestrator import KnowledgePipeline
@@ -219,6 +220,17 @@ def rebuild_index_and_links() -> ReindexResponse:
         return ReindexResponse(**result)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"重建索引失败：{error}") from error
+
+
+@app.post("/api/knowledge/documents/{document_id}/reindex", response_model=ReindexDocumentResponse)
+def reindex_document(document_id: str) -> ReindexDocumentResponse:
+    try:
+        result = pipeline.reindex_document(document_id)
+        return ReindexDocumentResponse(**result)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"重建文档索引失败：{error}") from error
 
 
 @app.post("/api/images/generate", response_model=ImageGenerateResponse)

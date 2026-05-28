@@ -489,7 +489,7 @@ class KnowledgeRepository:
     def replace_links(self, source_id: str, related: list[dict[str, Any]]) -> None:
         now = utc_now()
         with self.connect() as conn:
-            conn.execute("DELETE FROM document_links WHERE source_id = ?", (source_id,))
+            conn.execute("DELETE FROM document_links WHERE source_id = ? OR target_id = ?", (source_id, source_id))
             for item in related:
                 target_id = item["target_id"]
                 score = float(item["score"])
