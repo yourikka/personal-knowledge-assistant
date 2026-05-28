@@ -52,6 +52,102 @@ class DocumentChunker:
             )
         return chunks
 
+    def sections_from_chunks(self, document_id: str, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not chunks:
+            return []
+
+        sections: list[dict[str, Any]] = []
+        current: list[dict[str, Any]] = []
+        current_heading: tuple[str, ...] | None = None
+
+        for chunk in sorted(chunks, key=lambda item: item["chunk_index"]):
+            heading_path = tuple(chunk.get("metadata", {}).get("heading_path") or [])
+            if current and heading_path != current_heading:
+                sections.append(self._section_from_chunks(document_id, len(sections), current, current_heading or ()))
+                current = []
+            current.append(chunk)
+            current_heading = heading_path
+
+        if current:
+            sections.append(self._section_from_chunks(document_id, len(sections), current, current_heading or ()))
+        return sections
+
+    def sections(self, document_id: str, text: str) -> list[dict[str, Any]]:
+        source = text.strip()
+        if not source:
+            return []
+
+        units = self._semantic_units(source)
+        if not units:
+            return []
+
+        sections: list[dict[str, Any]] = []
+        current: list[dict[str, Any]] = []
+        current_heading: tuple[str, ...] | None = None
+        for unit in units:
+            heading_path = tuple(unit.get("heading_path") or [])
+            if current and heading_path != current_heading:
+                sections.append(self._section_from_units(document_id, len(sections), source, current, current_heading or ()))
+                current = []
+            current.append(unit)
+            current_heading = heading_path
+
+        if current:
+            sections.append(self._section_from_units(document_id, len(sections), source, current, current_heading or ()))
+        return sections
+
+    def _section_from_units(
+        self,
+        document_id: str,
+        section_index: int,
+        source: str,
+        units: list[dict[str, Any]],
+        heading_path: tuple[str, ...],
+    ) -> dict[str, Any]:
+        heading = heading_path[-1] if heading_path else "全文"
+        start = units[0]["start"]
+        end = units[-1]["end"]
+        text = normalize_whitespace(source[start:end])
+        return {
+            "id": f"{document_id}:section:{section_index:04d}",
+            "document_id": document_id,
+            "section_index": section_index,
+            "heading": heading,
+            "heading_path": list(heading_path),
+            "text": text,
+            "char_start": start,
+            "char_end": end,
+            "metadata": {
+                "unit_count": len(units),
+                "char_count": len(text),
+            },
+        }
+
+    def _section_from_chunks(
+        self,
+        document_id: str,
+        section_index: int,
+        chunks: list[dict[str, Any]],
+        heading_path: tuple[str, ...],
+    ) -> dict[str, Any]:
+        heading = heading_path[-1] if heading_path else "全文"
+        text = normalize_whitespace("\n\n".join(chunk["text"] for chunk in chunks))
+        return {
+            "id": f"{document_id}:section:{section_index:04d}",
+            "document_id": document_id,
+            "section_index": section_index,
+            "heading": heading,
+            "heading_path": list(heading_path),
+            "text": text,
+            "char_start": min(chunk["char_start"] for chunk in chunks),
+            "char_end": max(chunk["char_end"] for chunk in chunks),
+            "metadata": {
+                "chunk_ids": [chunk["id"] for chunk in chunks],
+                "chunk_count": len(chunks),
+                "char_count": len(text),
+            },
+        }
+
     def _semantic_units(self, text: str) -> list[dict[str, Any]]:
         units: list[dict[str, Any]] = []
         heading_stack: list[tuple[int, str]] = []

@@ -134,6 +134,7 @@ class PipelineState:
     parsed_text: str = ""
     cleaned_text: str = ""
     chunks: list[dict[str, Any]] = field(default_factory=list)
+    sections: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     title: str = ""
     category: str = "未分类"

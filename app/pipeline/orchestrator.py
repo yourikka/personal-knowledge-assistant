@@ -60,12 +60,28 @@ class KnowledgePipeline:
             if not chunks:
                 chunks = self.chunker.chunk(document_id=document["id"], text=document["cleaned_text"])
                 self.repo.replace_document_chunks(document["id"], chunks)
+            sections = self.repo.list_document_sections(document["id"])
+            if not sections:
+                sections = self.chunker.sections(document_id=document["id"], text=document["cleaned_text"])
+                self.repo.replace_document_sections(document["id"], sections)
 
             self.vector_store.add_document(
                 document_id=document["id"],
                 text=document["cleaned_text"],
                 metadata={"title": document["title"], "category": document["category"]},
             )
+            for section in sections:
+                self.vector_store.add_section(
+                    section_id=section["id"],
+                    text=section["text"],
+                    metadata={
+                        "document_id": document["id"],
+                        "section_index": section["section_index"],
+                        "heading": section["heading"],
+                        "title": document["title"],
+                        "category": document["category"],
+                    },
+                )
             for chunk in chunks:
                 self.vector_store.add_chunk(
                     chunk_id=chunk["id"],
@@ -138,11 +154,12 @@ class KnowledgePipeline:
             raise ValueError("文档不存在。")
 
         chunk_ids = [chunk["id"] for chunk in self.repo.list_document_chunks(document_id)]
+        section_ids = [section["id"] for section in self.repo.list_document_sections(document_id)]
         deleted = self.repo.delete_document(document_id)
         if not deleted:
             raise ValueError("文档不存在。")
 
-        self.vector_store.delete_ids([document_id, *chunk_ids])
+        self.vector_store.delete_ids([document_id, *section_ids, *chunk_ids])
         return {"status": "ok", "document_id": document_id, "deleted_chunk_ids": chunk_ids}
 
     def generate_image(self, prompt: str, size: str, quality: str) -> dict:
@@ -207,5 +224,8 @@ class KnowledgePipeline:
             }
         )
         self.repo.replace_document_chunks(state.document_id, state.chunks)
-        state.logs.append(f"persist: 已写入 SQLite 元数据仓库和 {len(state.chunks)} 个 chunk。")
+        self.repo.replace_document_sections(state.document_id, state.sections)
+        state.logs.append(
+            f"persist: 已写入 SQLite 元数据仓库、{len(state.sections)} 个 section 和 {len(state.chunks)} 个 chunk。"
+        )
         return state

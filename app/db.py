@@ -70,6 +70,20 @@ class KnowledgeRepository:
                     FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS document_sections (
+                    id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL,
+                    section_index INTEGER NOT NULL,
+                    heading TEXT NOT NULL,
+                    heading_path_json TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    char_start INTEGER NOT NULL,
+                    char_end INTEGER NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS chat_turns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -92,6 +106,7 @@ class KnowledgeRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id, chunk_index);
+                CREATE INDEX IF NOT EXISTS idx_document_sections_document_id ON document_sections(document_id, section_index);
                 CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id ON chat_turns(session_id, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_session_id ON memory_records(session_id, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_kind ON memory_records(kind, updated_at DESC);
@@ -159,6 +174,7 @@ class KnowledgeRepository:
             if not exists:
                 return False
             conn.execute("DELETE FROM document_links WHERE source_id = ? OR target_id = ?", (document_id, document_id))
+            conn.execute("DELETE FROM document_sections WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
         return True
@@ -227,6 +243,51 @@ class KnowledgeRepository:
             ).fetchall()
         return [self._row_to_chunk(row) for row in rows]
 
+    def replace_document_sections(self, document_id: str, sections: list[dict[str, Any]]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute("DELETE FROM document_sections WHERE document_id = ?", (document_id,))
+            for section in sections:
+                conn.execute(
+                    """
+                    INSERT INTO document_sections(
+                        id, document_id, section_index, heading, heading_path_json,
+                        text, char_start, char_end, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        section["id"],
+                        document_id,
+                        int(section["section_index"]),
+                        section["heading"],
+                        json.dumps(section.get("heading_path", []), ensure_ascii=False),
+                        section["text"],
+                        int(section["char_start"]),
+                        int(section["char_end"]),
+                        json.dumps(section.get("metadata", {}), ensure_ascii=False),
+                        now,
+                    ),
+                )
+
+    def list_document_sections(self, document_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM document_sections
+                WHERE document_id = ?
+                ORDER BY section_index ASC
+                """,
+                (document_id,),
+            ).fetchall()
+        return [self._row_to_section(row) for row in rows]
+
+    def get_section(self, section_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM document_sections WHERE id = ?", (section_id,)).fetchone()
+        return self._row_to_section(row) if row else None
+
     def get_chunk(self, chunk_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM document_chunks WHERE id = ?", (chunk_id,)).fetchone()
@@ -276,6 +337,44 @@ class KnowledgeRepository:
                     if row["document_id"] in exclude_document_ids:
                         continue
                     rows_by_id[row["id"]] = self._row_to_chunk(row)
+
+        return list(rows_by_id.values())[:limit]
+
+    def search_sections_keyword(
+        self,
+        query: str,
+        limit: int = 20,
+        exclude_document_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        terms = [term.strip().lower() for term in query.split() if term.strip()]
+        if not terms:
+            return []
+
+        exclude_document_ids = exclude_document_ids or set()
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        with self.connect() as conn:
+            for term in terms:
+                like = f"%{term}%"
+                rows = conn.execute(
+                    """
+                    SELECT s.*
+                    FROM document_sections s
+                    JOIN documents d ON d.id = s.document_id
+                    WHERE lower(s.heading) LIKE ?
+                       OR lower(s.text) LIKE ?
+                       OR lower(d.title) LIKE ?
+                       OR lower(d.summary) LIKE ?
+                       OR lower(d.tags_json) LIKE ?
+                    ORDER BY d.created_at DESC, s.section_index ASC
+                    LIMIT ?
+                    """,
+                    (like, like, like, like, like, limit),
+                ).fetchall()
+                for row in rows:
+                    if row["document_id"] in exclude_document_ids:
+                        continue
+                    section = self._row_to_section(row)
+                    rows_by_id[section["id"]] = section
 
         return list(rows_by_id.values())[:limit]
 
@@ -511,6 +610,20 @@ class KnowledgeRepository:
             "id": row["id"],
             "document_id": row["document_id"],
             "chunk_index": row["chunk_index"],
+            "text": row["text"],
+            "char_start": row["char_start"],
+            "char_end": row["char_end"],
+            "metadata": json.loads(row["metadata_json"]),
+            "created_at": row["created_at"],
+        }
+
+    def _row_to_section(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "document_id": row["document_id"],
+            "section_index": row["section_index"],
+            "heading": row["heading"],
+            "heading_path": json.loads(row["heading_path_json"]),
             "text": row["text"],
             "char_start": row["char_start"],
             "char_end": row["char_end"],

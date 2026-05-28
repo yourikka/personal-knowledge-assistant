@@ -26,6 +26,18 @@ class LinkingAgent:
             text=state.cleaned_text,
             metadata={"title": state.title, "category": state.category},
         )
+        for section in state.sections:
+            self.vector_store.add_section(
+                section_id=section["id"],
+                text=section["text"],
+                metadata={
+                    "document_id": state.document_id,
+                    "section_index": section["section_index"],
+                    "heading": section["heading"],
+                    "title": state.title,
+                    "category": state.category,
+                },
+            )
         for chunk in state.chunks:
             self.vector_store.add_chunk(
                 chunk_id=chunk["id"],

@@ -29,6 +29,10 @@ class Settings:
     rag_min_score: float = float(os.getenv("RAG_MIN_SCORE", "0.01"))
     rag_recent_boost: float = float(os.getenv("RAG_RECENT_BOOST", "0.04"))
     rag_tag_boost: float = float(os.getenv("RAG_TAG_BOOST", "0.06"))
+    rag_hierarchical_enabled: bool = os.getenv("RAG_HIERARCHICAL_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    rag_document_top_k: int = int(os.getenv("RAG_DOCUMENT_TOP_K", "4"))
+    rag_section_top_k: int = int(os.getenv("RAG_SECTION_TOP_K", "8"))
+    rag_section_chunk_limit: int = int(os.getenv("RAG_SECTION_CHUNK_LIMIT", "4"))
     memory_enabled: bool = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     memory_top_k: int = int(os.getenv("MEMORY_TOP_K", "5"))
     memory_min_score: float = float(os.getenv("MEMORY_MIN_SCORE", "0.12"))

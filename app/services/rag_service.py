@@ -94,40 +94,138 @@ class RAGService:
                 document = self.repo.get_document(chunk["document_id"])
                 if not document:
                     continue
-                entry = candidates.setdefault(
-                    chunk["id"],
-                    {
-                        "chunk": chunk,
-                        "document": document,
-                        "signals": [],
-                        "best_rank": rank + 1,
-                        "raw_score": 0.0,
-                    },
+                self._add_candidate(
+                    candidates=candidates,
+                    chunk=chunk,
+                    document=document,
+                    signal={"source": "chunk_vector", "query": query, "score": hit["score"], "rank": rank + 1},
                 )
-                entry["signals"].append({"source": "vector", "query": query, "score": hit["score"], "rank": rank + 1})
-                entry["best_rank"] = min(entry["best_rank"], rank + 1)
-                entry["raw_score"] = max(entry["raw_score"], hit["score"])
 
             keyword_hits = self.repo.search_chunks_keyword(query, limit=candidate_limit, exclude_document_ids=exclude_ids)
             for rank, chunk in enumerate(keyword_hits):
                 document = self.repo.get_document(chunk["document_id"])
                 if not document:
                     continue
-                entry = candidates.setdefault(
-                    chunk["id"],
-                    {
-                        "chunk": chunk,
-                        "document": document,
-                        "signals": [],
-                        "best_rank": rank + 1,
-                        "raw_score": 0.0,
-                    },
-                )
                 keyword_score = 1.0 / (rank + 1 + query_index)
-                entry["signals"].append({"source": "keyword", "query": query, "score": keyword_score, "rank": rank + 1})
-                entry["best_rank"] = min(entry["best_rank"], rank + 1)
-                entry["raw_score"] = max(entry["raw_score"], keyword_score)
+                self._add_candidate(
+                    candidates=candidates,
+                    chunk=chunk,
+                    document=document,
+                    signal={"source": "chunk_keyword", "query": query, "score": keyword_score, "rank": rank + 1},
+                )
+            if self.settings.rag_hierarchical_enabled:
+                self._collect_hierarchical_candidates(
+                    query=query,
+                    candidate_limit=candidate_limit,
+                    exclude_ids=exclude_ids,
+                    candidates=candidates,
+                )
         return candidates
+
+    def _collect_hierarchical_candidates(
+        self,
+        query: str,
+        candidate_limit: int,
+        exclude_ids: set[str],
+        candidates: dict[str, dict[str, Any]],
+    ) -> None:
+        document_hits = self.vector_store.search(
+            query=query,
+            top_k=min(self.settings.rag_document_top_k, candidate_limit),
+            kind="document",
+            exclude_ids=exclude_ids,
+        )
+        for rank, hit in enumerate(document_hits):
+            document = self.repo.get_document(hit["id"])
+            if not document:
+                continue
+            for chunk in self._best_chunks_for_document(query, document["id"], self.settings.rag_section_chunk_limit):
+                self._add_candidate(
+                    candidates=candidates,
+                    chunk=chunk,
+                    document=document,
+                    signal={"source": "document_vector", "query": query, "score": hit["score"], "rank": rank + 1},
+                )
+
+        section_hits = self.vector_store.search(
+            query=query,
+            top_k=min(self.settings.rag_section_top_k, candidate_limit * 2),
+            kind="section",
+        )
+        section_hits.extend(
+            {
+                "id": section["id"],
+                "score": 0.45,
+                "source": "section_keyword",
+            }
+            for section in self.repo.search_sections_keyword(
+                query=query,
+                limit=min(self.settings.rag_section_top_k, candidate_limit * 2),
+                exclude_document_ids=exclude_ids,
+            )
+        )
+        seen_sections: set[str] = set()
+        for rank, hit in enumerate(section_hits):
+            section_id = hit["id"]
+            if section_id in seen_sections:
+                continue
+            seen_sections.add(section_id)
+            section = self.repo.get_section(section_id)
+            if not section or section["document_id"] in exclude_ids:
+                continue
+            document = self.repo.get_document(section["document_id"])
+            if not document:
+                continue
+            source = hit.get("source", "section_vector")
+            for chunk in self._chunks_for_section(section)[: self.settings.rag_section_chunk_limit]:
+                self._add_candidate(
+                    candidates=candidates,
+                    chunk=chunk,
+                    document=document,
+                    signal={"source": source, "query": query, "score": hit["score"], "rank": rank + 1},
+                )
+
+    def _add_candidate(
+        self,
+        candidates: dict[str, dict[str, Any]],
+        chunk: dict[str, Any],
+        document: dict[str, Any],
+        signal: dict[str, Any],
+    ) -> None:
+        entry = candidates.setdefault(
+            chunk["id"],
+            {
+                "chunk": chunk,
+                "document": document,
+                "signals": [],
+                "best_rank": signal["rank"],
+                "raw_score": 0.0,
+            },
+        )
+        entry["signals"].append(signal)
+        entry["best_rank"] = min(entry["best_rank"], signal["rank"])
+        entry["raw_score"] = max(entry["raw_score"], float(signal["score"]))
+
+    def _best_chunks_for_document(self, query: str, document_id: str, limit: int) -> list[dict[str, Any]]:
+        chunks = self.repo.list_document_chunks(document_id)
+        ranked = sorted(
+            chunks,
+            key=lambda chunk: self.vector_store.similarity(query, chunk["text"]),
+            reverse=True,
+        )
+        return ranked[:limit]
+
+    def _chunks_for_section(self, section: dict[str, Any]) -> list[dict[str, Any]]:
+        chunk_ids = section.get("metadata", {}).get("chunk_ids") or []
+        chunks = [chunk for chunk_id in chunk_ids if (chunk := self.repo.get_chunk(chunk_id))]
+        if chunks:
+            return chunks
+
+        return [
+            chunk
+            for chunk in self.repo.list_document_chunks(section["document_id"])
+            if chunk["char_start"] < section["char_end"] and chunk["char_end"] > section["char_start"]
+        ]
 
     def _rerank(self, query: str, candidates: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         query_tags = set(tokenize(query))
@@ -269,7 +367,7 @@ class RAGService:
         weighted = 0.0
         total = 0.0
         for signal in signals:
-            weight = 1.0 if signal["source"] == "vector" else 0.85
+            weight = 1.0 if "vector" in signal["source"] else 0.85
             weighted += float(signal["score"]) * weight
             total += weight
         return min(1.0, weighted / max(total, 1e-9))

@@ -48,6 +48,10 @@ class VectorStore:
         payload = {"kind": "chunk", **(metadata or {})}
         self.add_text(chunk_id, text, payload)
 
+    def add_section(self, section_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
+        payload = {"kind": "section", **(metadata or {})}
+        self.add_text(section_id, text, payload)
+
     def add_memory(self, memory_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
         payload = {"kind": "memory", **(metadata or {})}
         self.add_text(memory_id, text, payload)
