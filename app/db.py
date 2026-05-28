@@ -149,6 +149,31 @@ class KnowledgeRepository:
                     FOREIGN KEY(first_chunk_id) REFERENCES document_chunks(id) ON DELETE SET NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY,
+                    job_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    error TEXT,
+                    idempotency_key TEXT,
+                    attempts INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS job_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id, chunk_index);
                 CREATE INDEX IF NOT EXISTS idx_document_sections_document_id ON document_sections(document_id, section_index);
@@ -161,6 +186,11 @@ class KnowledgeRepository:
                 CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_entity_id, relation);
                 CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_entity_id, relation);
                 CREATE INDEX IF NOT EXISTS idx_document_entities_entity ON document_entities(entity_id, document_id);
+                CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, updated_at DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency_key
+                    ON jobs(idempotency_key)
+                    WHERE idempotency_key IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id, id ASC);
                 """
             )
             self._ensure_memory_columns(conn)
@@ -706,6 +736,141 @@ class KnowledgeRepository:
             conn.execute("DELETE FROM memory_records WHERE id = ?", (memory_id,))
         return True
 
+    def create_job(
+        self,
+        job_id: str,
+        job_type: str,
+        payload: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with self.connect() as conn:
+            if idempotency_key:
+                existing = conn.execute("SELECT * FROM jobs WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
+                if existing:
+                    return self._row_to_job(existing)
+            conn.execute(
+                """
+                INSERT INTO jobs(
+                    id, job_type, status, payload_json, result_json, error,
+                    idempotency_key, attempts, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    job_type,
+                    "queued",
+                    json.dumps(payload, ensure_ascii=False),
+                    json.dumps({}, ensure_ascii=False),
+                    None,
+                    idempotency_key,
+                    0,
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return self._row_to_job(row)
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return self._row_to_job(row) if row else None
+
+    def list_job_events(self, job_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM job_events
+                WHERE job_id = ?
+                ORDER BY id ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        return [self._row_to_job_event(row) for row in rows]
+
+    def add_job_event(
+        self,
+        job_id: str,
+        event_type: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO job_events(job_id, event_type, message, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (job_id, event_type, message, json.dumps(metadata or {}, ensure_ascii=False), utc_now()),
+            )
+
+    def mark_job_running(self, job_id: str) -> bool:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'running', attempts = attempts + 1, started_at = ?, updated_at = ?, error = NULL
+                WHERE id = ? AND status = 'queued'
+                """,
+                (now, now, job_id),
+            )
+        return cursor.rowcount == 1
+
+    def complete_job(self, job_id: str, result: dict[str, Any]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'succeeded', result_json = ?, updated_at = ?, finished_at = ?, error = NULL
+                WHERE id = ?
+                """,
+                (json.dumps(result, ensure_ascii=False), now, now, job_id),
+            )
+
+    def fail_job(self, job_id: str, error: str) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'failed', error = ?, updated_at = ?, finished_at = ?
+                WHERE id = ?
+                """,
+                (error, now, now, job_id),
+            )
+
+    def cancel_job(self, job_id: str) -> bool:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'cancelled', updated_at = ?, finished_at = ?
+                WHERE id = ? AND status = 'queued'
+                """,
+                (now, now, job_id),
+            )
+        return cursor.rowcount == 1
+
+    def retry_job(self, job_id: str) -> bool:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued', error = NULL, result_json = ?, updated_at = ?,
+                    started_at = NULL, finished_at = NULL
+                WHERE id = ? AND status = 'failed'
+                """,
+                (json.dumps({}, ensure_ascii=False), now, job_id),
+            )
+        return cursor.rowcount == 1
+
     def replace_document_graph(
         self,
         document_id: str,
@@ -984,3 +1149,29 @@ class KnowledgeRepository:
         document["graph_entity_type"] = row["entity_type"]
         document["graph_mention_count"] = row["mention_count"]
         return document
+
+    def _row_to_job(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "job_type": row["job_type"],
+            "status": row["status"],
+            "payload": json.loads(row["payload_json"]),
+            "result": json.loads(row["result_json"]),
+            "error": row["error"],
+            "idempotency_key": row["idempotency_key"],
+            "attempts": row["attempts"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+        }
+
+    def _row_to_job_event(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "job_id": row["job_id"],
+            "event_type": row["event_type"],
+            "message": row["message"],
+            "metadata": json.loads(row["metadata_json"]),
+            "created_at": row["created_at"],
+        }

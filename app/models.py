@@ -65,6 +65,36 @@ class IngestResponse(BaseModel):
     graph: dict[str, Any] = Field(default_factory=dict)
 
 
+class AsyncIngestRequest(BaseModel):
+    request: IngestRequest
+    idempotency_key: str | None = Field(default=None, min_length=1)
+
+
+class JobEventResponse(BaseModel):
+    id: int
+    job_id: str
+    event_type: str
+    message: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class JobResponse(BaseModel):
+    id: str
+    job_type: str
+    status: str
+    payload: dict[str, Any]
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    idempotency_key: str | None = None
+    attempts: int
+    created_at: str
+    updated_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    events: list[JobEventResponse] = Field(default_factory=list)
+
+
 class QueryResponse(BaseModel):
     answer: str
     references: list[dict[str, Any]]

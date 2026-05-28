@@ -21,6 +21,7 @@
 - 检索问答使用 chunk 级增强 RAG：高质量切块、查询改写、多路召回、重排、MMR 去冗余、上下文压缩、引用回答
 - 检索问答支持记忆系统：按会话召回相关记忆，回答后自动提炼用户偏好、目标、决策和稳定事实
 - 入库后抽取基础知识图谱：实体、实体关系、文档实体映射，并在 RAG 中作为图谱召回信号
+- 支持异步入库任务：提交后返回 `job_id`，后台执行，支持状态查询、取消和失败重试
 
 ## 项目结构
 
@@ -35,6 +36,7 @@
 - `app/services/text_utils.py`：文本清洗、标签、摘要、向量工具
 - `app/services/embedding_service.py`：智谱 `embedding-3` / 本地回退向量生成
 - `app/services/graph_service.py`：实体抽取、关系构建和图谱增强召回
+- `app/services/job_service.py`：单机异步任务队列、状态追踪和失败重试
 - `app/services/memory_service.py`：会话记忆召回、格式化、提炼和向量索引
 - `app/services/vector_store.py`：Chroma / 本地向量检索适配
 - `app/static/`：知识入库、文档内容查看、切片、检索和文档管理 Web 前端
@@ -89,6 +91,27 @@ curl -X POST http://127.0.0.1:8010/api/knowledge/ingest \
     "source": "# LangGraph\n\nLangGraph 适合做多节点 Agent 编排。",
     "title": "LangGraph 笔记"
   }'
+```
+
+### 异步文档入库
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/jobs/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {
+      "source_type": "text",
+      "source": "技术：LangGraph\nLangGraph 适合做多 Agent 编排。",
+      "title": "LangGraph 异步入库"
+    },
+    "idempotency_key": "langgraph-note-001"
+  }'
+```
+
+查询任务：
+
+```bash
+curl http://127.0.0.1:8010/api/jobs/{job_id}
 ```
 
 ### 查看文档切片
@@ -214,6 +237,7 @@ agent_acquisition
 - 支持查询文档列表、文档详情、关联结果和自然语言问答
 - 支持调用生图 Agent 生成知识库封面图或概念图
 - 支持会话历史和长期记忆写入 SQLite，用于多轮上下文增强
+- 支持单机异步入库任务，任务状态和事件写入 SQLite
 - OCR、Playwright、Chroma 都是可选能力，不会阻塞基础功能启动
 - 支持 `python scripts/smoke_test.py` 做基础回归测试
 - 支持 `python scripts/eval_rag.py` 做离线 RAG 质量评测

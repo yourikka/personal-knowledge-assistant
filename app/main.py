@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .db import KnowledgeRepository
 from .models import (
+    AsyncIngestRequest,
     DeleteDocumentResponse,
     DeleteMemoryResponse,
     DocumentChunkResponse,
@@ -22,6 +23,7 @@ from .models import (
     ImageGenerateResponse,
     IngestRequest,
     IngestResponse,
+    JobResponse,
     MemoryResponse,
     QueryRequest,
     QueryResponse,
@@ -29,6 +31,7 @@ from .models import (
 )
 from .pipeline.orchestrator import KnowledgePipeline
 from .services.embedding_service import EmbeddingService
+from .services.job_service import JobService
 from .services.vector_store import VectorStore
 
 
@@ -37,13 +40,17 @@ repo = KnowledgeRepository(settings.sqlite_path)
 embedding_service = EmbeddingService(settings)
 vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma, embedding_service)
 pipeline = KnowledgePipeline(settings, repo, vector_store)
+job_service = JobService(repo, pipeline)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     pipeline.bootstrap()
-    yield
+    try:
+        yield
+    finally:
+        job_service.shutdown()
 
 
 app = FastAPI(title="Personal Knowledge Assistant", version="0.1.0", lifespan=lifespan)
@@ -75,6 +82,40 @@ def ingest_document(request: IngestRequest) -> IngestResponse:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"入库失败：{error}") from error
+
+
+@app.post("/api/jobs/ingest", response_model=JobResponse)
+def submit_ingest_job(request: AsyncIngestRequest) -> JobResponse:
+    try:
+        return JobResponse(**job_service.submit_ingest(request.request, request.idempotency_key))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"提交任务失败：{error}") from error
+
+
+@app.get("/api/jobs/{job_id}", response_model=JobResponse)
+def get_job(job_id: str) -> JobResponse:
+    try:
+        return JobResponse(**job_service.get_job(job_id))
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/jobs/{job_id}/cancel", response_model=JobResponse)
+def cancel_job(job_id: str) -> JobResponse:
+    try:
+        return JobResponse(**job_service.cancel(job_id))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/jobs/{job_id}/retry", response_model=JobResponse)
+def retry_job(job_id: str) -> JobResponse:
+    try:
+        return JobResponse(**job_service.retry(job_id))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.post("/api/knowledge/upload", response_model=IngestResponse)
