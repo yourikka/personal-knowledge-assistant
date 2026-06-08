@@ -79,13 +79,16 @@ class RAGService:
         history_text = "\n".join(f"{item['role']}: {item['content']}" for item in history[-4:])
 
         if self.settings.rag_rewrite_enabled and self.openai_service.enabled():
-            result = self.openai_service.generate_json(
-                system_prompt=(
-                    "你是 RAG 查询改写器。请返回 JSON，字段 queries 是 2 到 4 个中文查询，"
-                    "覆盖用户原意、关键词表达和更具体的检索表达。不要添加用户没有问的主题。"
-                ),
-                user_prompt=f"用户问题:\n{query}\n\n会话历史:\n{history_text or '无'}",
-            )
+            try:
+                result = self.openai_service.generate_json(
+                    system_prompt=(
+                        "你是 RAG 查询改写器。请返回 JSON，字段 queries 是 2 到 4 个中文查询，"
+                        "覆盖用户原意、关键词表达和更具体的检索表达。不要添加用户没有问的主题。"
+                    ),
+                    user_prompt=f"用户问题:\n{query}\n\n会话历史:\n{history_text or '无'}",
+                )
+            except Exception:
+                result = None
             if result and isinstance(result.get("queries"), list):
                 for item in result["queries"]:
                     text = str(item).strip()

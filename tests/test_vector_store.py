@@ -7,6 +7,15 @@ from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
 
 
+class CountingEmbeddingService:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def embed(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return [1.0, 0.0] if "LangGraph" in text else [0.0, 1.0]
+
+
 def test_vector_store_recovers_from_persisted_chroma_dimension_mismatch(tmp_path):
     chroma_dir = tmp_path / "chroma"
     client = chromadb.PersistentClient(path=str(chroma_dir))
@@ -35,3 +44,14 @@ def test_vector_store_recovers_from_persisted_chroma_dimension_mismatch(tmp_path
     persisted = vector_store.client.get_collection("knowledge_documents")
     assert getattr(persisted._model, "dimension", None) == 128
     assert results[0]["id"] == "doc-1"
+
+
+def test_vector_store_reuses_text_embeddings(tmp_path):
+    settings = Settings(chroma_dir=str(tmp_path / "chroma"), enable_chroma=False)
+    embedding_service = CountingEmbeddingService()
+    vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma, embedding_service)
+
+    vector_store.similarity("LangGraph", "LangGraph")
+    vector_store.similarity("LangGraph", "LangGraph")
+
+    assert embedding_service.calls == ["LangGraph"]

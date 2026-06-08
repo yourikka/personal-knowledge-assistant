@@ -30,3 +30,22 @@ def test_embedding_service_returns_configured_zero_vector_for_blank_input():
 
     assert len(vector) == 2048
     assert set(vector) == {0.0}
+
+
+def test_embedding_service_falls_back_when_remote_provider_fails(monkeypatch):
+    settings = Settings(
+        embedding_provider="zhipu",
+        embedding_api_key="dummy",
+        embedding_dimensions=16,
+    )
+    service = EmbeddingService(settings)
+
+    def fail_request(*_, **__):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(service, "_post_json", fail_request)
+
+    vector = service.embed("LangGraph RAG")
+
+    assert len(vector) == 16
+    assert any(value != 0 for value in vector)

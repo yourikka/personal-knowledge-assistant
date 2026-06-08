@@ -148,7 +148,8 @@ class KnowledgePipeline:
         return self.query_agent.run(query=query, top_k=top_k, session_id=session_id)
 
     def query_stream(self, query: str, top_k: int, session_id: str | None = None):
-        yield {"event": "status", "data": "正在检索知识库并生成答案..."}
+        yield {"event": "status", "data": "正在检索知识库..."}
+        yield {"event": "status", "data": "正在调用模型生成答案，超时后会自动回退本地摘要..."}
         result = self.query(query=query, top_k=top_k, session_id=session_id)
         chunk_size = max(12, self.query_agent.settings.query_stream_chunk_chars)
         answer = result["answer"]

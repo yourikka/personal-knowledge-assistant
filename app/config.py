@@ -63,7 +63,7 @@ class Settings:
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
     openai_text_model: str = os.getenv("OPENAI_TEXT_MODEL", "gpt-5.4").strip()
     openai_image_model: str = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2").strip()
-    openai_text_timeout_seconds: int = int(os.getenv("OPENAI_TEXT_TIMEOUT_SECONDS", "60"))
+    openai_text_timeout_seconds: int = int(os.getenv("OPENAI_TEXT_TIMEOUT_SECONDS", "15"))
     openai_image_timeout_seconds: int = int(os.getenv("OPENAI_IMAGE_TIMEOUT_SECONDS", "180"))
     openai_chat_completions_path: str = os.getenv("OPENAI_CHAT_COMPLETIONS_PATH", "/chat/completions").strip()
     openai_image_generations_path: str = os.getenv("OPENAI_IMAGE_GENERATIONS_PATH", "/images/generations").strip()

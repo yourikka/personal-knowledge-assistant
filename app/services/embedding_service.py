@@ -33,17 +33,21 @@ class EmbeddingService:
             "input": text,
             "dimensions": self.settings.embedding_dimensions,
         }
-        response = self._post_json(
-            self.settings.embedding_path,
-            payload,
-            timeout=self.settings.embedding_timeout_seconds,
-        )
+        try:
+            response = self._post_json(
+                self.settings.embedding_path,
+                payload,
+                timeout=self.settings.embedding_timeout_seconds,
+            )
+        except Exception:
+            return make_hash_embedding(text, dims=self.settings.embedding_dimensions)
+
         data = response.get("data") or []
         if not data:
-            raise RuntimeError("embedding api returned empty data")
+            return make_hash_embedding(text, dims=self.settings.embedding_dimensions)
         embedding = data[0].get("embedding") or []
         if not embedding:
-            raise RuntimeError("embedding api returned empty embedding")
+            return make_hash_embedding(text, dims=self.settings.embedding_dimensions)
         return [float(value) for value in embedding]
 
     def _post_json(self, path: str, payload: dict, timeout: int) -> dict:

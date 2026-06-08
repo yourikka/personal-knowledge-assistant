@@ -21,6 +21,7 @@ class VectorStore:
         self.local_embeddings: dict[str, list[float]] = {}
         self.local_texts: dict[str, str] = {}
         self.local_metadata: dict[str, dict[str, Any]] = {}
+        self._text_embedding_cache: dict[str, list[float]] = {}
         self.client = None
         self.collection = None
         self.collection_name = "knowledge_documents"
@@ -32,7 +33,7 @@ class VectorStore:
             self._ensure_collection_dimension()
 
     def add_text(self, item_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
-        embedding = self.embedding_service.embed(text)
+        embedding = self._embed_text(text)
         self.local_embeddings[item_id] = embedding
         self.local_texts[item_id] = text
         self.local_metadata[item_id] = metadata or {}
@@ -65,6 +66,7 @@ class VectorStore:
         self.local_embeddings = {}
         self.local_texts = {}
         self.local_metadata = {}
+        self._text_embedding_cache = {}
 
     def delete_ids(self, ids: list[str]) -> None:
         for item_id in ids:
@@ -95,7 +97,7 @@ class VectorStore:
         kind: str | None = None,
     ) -> list[dict[str, Any]]:
         exclude_ids = exclude_ids or set()
-        query_embedding = self.embedding_service.embed(query)
+        query_embedding = self._embed_text(query)
         local_ranked = []
         for document_id, document_embedding in self.local_embeddings.items():
             if document_id in exclude_ids:
@@ -143,12 +145,21 @@ class VectorStore:
         return merged[:top_k]
 
     def similarity(self, left_text: str, right_text: str) -> float:
-        vector_score = cosine_similarity(self.embedding_service.embed(left_text), self.embedding_service.embed(right_text))
+        vector_score = cosine_similarity(self._embed_text(left_text), self._embed_text(right_text))
         lexical_score = overlap_score(left_text, right_text)
         return round(vector_score * 0.7 + lexical_score * 0.3, 4)
 
     def _expected_embedding_dimension(self) -> int:
-        return len(self.embedding_service.embed(""))
+        return len(self._embed_text(""))
+
+    def _embed_text(self, text: str) -> list[float]:
+        key = text.strip()
+        if key in self._text_embedding_cache:
+            return self._text_embedding_cache[key]
+        embedding = self.embedding_service.embed(text)
+        if key:
+            self._text_embedding_cache[key] = embedding
+        return embedding
 
     def _collection_dimension(self) -> int | None:
         if self.collection is None:

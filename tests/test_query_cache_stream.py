@@ -57,3 +57,28 @@ def test_pipeline_query_uses_rag_cache_and_streams_events(tmp_path):
     assert events[0]["event"] == "status"
     assert any(event["event"] == "delta" for event in events)
     assert events[-1]["event"] == "done"
+
+
+def test_pipeline_query_falls_back_when_model_generation_fails(tmp_path, monkeypatch):
+    settings, pipeline = build_pipeline(tmp_path)
+    pipeline.ingest(
+        IngestRequest(
+            source_type="text",
+            source="LangGraph 可以把采集、解析、摘要和问答节点编排成多 Agent 工作流。",
+            title="LangGraph 回退测试",
+        )
+    )
+
+    settings.openai_api_key = "test-key"
+
+    def fail_model_call(*_, **__):
+        raise RuntimeError("model timeout")
+
+    monkeypatch.setattr(pipeline.openai_service, "generate_json", fail_model_call)
+    monkeypatch.setattr(pipeline.openai_service, "generate_text", fail_model_call)
+
+    result = pipeline.query("LangGraph 适合做什么？", top_k=2)
+
+    assert result["answer"].startswith("我在知识库里找到")
+    assert result["references"]
+    assert any("模型生成失败，已回退本地 RAG 摘要" in log for log in result["logs"])
