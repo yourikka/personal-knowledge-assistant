@@ -616,7 +616,8 @@ button:focus {
 
 .chunk-item,
 .reference-item,
-.related-item {
+.related-item,
+.graph-edge {
   display: grid;
   gap: 6px;
   width: 100%;
@@ -631,9 +632,52 @@ button:focus {
 
 .chunk-title,
 .reference-item strong,
-.related-item strong {
+.related-item strong,
+.graph-edge strong {
   color: var(--text);
   font-weight: 600;
+}
+
+.relation-section + .relation-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.relation-section-title {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.graph-node-list,
+.graph-edge-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.graph-node-list {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.graph-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.graph-edge-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .chunk-text {

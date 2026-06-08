@@ -506,6 +506,7 @@ agent_acquisition
 - `GET /api/knowledge/documents`
 - `GET /api/knowledge/documents/{document_id}`
 - `GET /api/knowledge/documents/{document_id}/chunks`
+- `GET /api/knowledge/documents/{document_id}/graph`
 - `DELETE /api/knowledge/documents/{document_id}`
 - `POST /api/knowledge/documents/{document_id}/delete`
 - `POST /api/knowledge/reindex`

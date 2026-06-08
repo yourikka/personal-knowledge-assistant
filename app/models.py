@@ -71,6 +71,12 @@ class DocumentChunkResponse(BaseModel):
     created_at: str
 
 
+class DocumentGraphResponse(BaseModel):
+    document_id: str
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class IngestResponse(BaseModel):
     document_id: str
     duplicate: bool

@@ -41,10 +41,13 @@ def test_ingest_extracts_document_graph(tmp_path):
 
     entities = repo.list_document_entities(result["document_id"])
     edges = repo.list_document_graph_edges(result["document_id"])
+    graph = pipeline.graph_service.graph_view(result["document_id"])
 
     assert any(entity["name"] == "LangGraph" and entity["entity_type"] == "technology" for entity in entities)
     assert any(entity["name"] == "OpenAI" and entity["entity_type"] == "organization" for entity in entities)
     assert edges
+    assert any(node["name"] == "LangGraph" for node in graph["nodes"])
+    assert any(edge["relation"] for edge in graph["edges"])
     assert any(node["id"].startswith("ent-") for node in result["graph"]["nodes"])
 
 

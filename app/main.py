@@ -18,6 +18,7 @@ from .models import (
     DeleteMemoryResponse,
     DocumentChunkResponse,
     DocumentDetailResponse,
+    DocumentGraphResponse,
     DocumentResponse,
     HealthResponse,
     ImageGenerateRequest,
@@ -295,6 +296,14 @@ def list_document_chunks(document_id: str) -> list[DocumentChunkResponse]:
     if not repo.get_document(document_id):
         raise HTTPException(status_code=404, detail="文档不存在。")
     return [DocumentChunkResponse(**chunk) for chunk in repo.list_document_chunks(document_id)]
+
+
+@app.get("/api/knowledge/documents/{document_id}/graph", response_model=DocumentGraphResponse)
+def get_document_graph(document_id: str) -> DocumentGraphResponse:
+    if not repo.get_document(document_id):
+        raise HTTPException(status_code=404, detail="文档不存在。")
+    graph = pipeline.graph_service.graph_view(document_id)
+    return DocumentGraphResponse(document_id=document_id, **graph)
 
 
 def delete_document_response(document_id: str) -> DeleteDocumentResponse:

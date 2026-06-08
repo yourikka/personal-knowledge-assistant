@@ -190,6 +190,12 @@ curl -N -X POST http://127.0.0.1:8010/api/knowledge/query/stream \
 curl http://127.0.0.1:8010/api/knowledge/documents/{document_id}/chunks
 ```
 
+### 查看文档知识图谱
+
+```bash
+curl http://127.0.0.1:8010/api/knowledge/documents/{document_id}/graph
+```
+
 ### 删除文档
 
 ```bash
@@ -280,6 +286,7 @@ agent_acquisition
 - 实体表：`graph_entities` 保存标准实体名、类型、别名和元数据。
 - 关系表：`graph_edges` 保存实体间关系、置信度和证据文档/chunk。
 - 映射表：`document_entities` 保存文档和实体的 mention 统计。
+- Web 展示：文档详情页的“知识关联”面板会展示相似文档、实体节点和关系证据。
 - 检索增强：`RAGService` 会根据 query 命中的实体扩展候选文档，并在 `signals` 中标记 `graph_entity`。
 - 回退策略：设置 `GRAPH_ENABLED=false` 后图谱抽取和图谱召回都会关闭，原 RAG 链路不受影响。
 

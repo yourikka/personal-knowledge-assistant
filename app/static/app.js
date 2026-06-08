@@ -2,6 +2,7 @@ const state = {
   documents: [],
   selectedDocumentId: null,
   selectedDocument: null,
+  selectedGraph: null,
   contentView: "cleaned",
   queryRunId: 0,
   queryAbortController: null,
@@ -216,6 +217,7 @@ function updateDocumentCounters() {
 
 function clearDocumentWorkspace(message = "选择或入库文档后显示摘要、标签和来源。") {
   state.selectedDocument = null;
+  state.selectedGraph = null;
   els.lastDocumentId.textContent = "等待文档";
   els.documentDetail.innerHTML = `<div class="placeholder">${escapeHtml(message)}</div>`;
   els.contentInsight.innerHTML = '<div class="placeholder">这里会按统一格式展示已入库文档，区块内部可独立滚动，点击任意文档进入阅读页。</div>';
@@ -254,7 +256,7 @@ function renderDocumentDetail(document) {
     void handleReindexDocument(event.currentTarget.dataset.reindexId, event.currentTarget);
   });
 
-  renderRelated(document.related || []);
+  renderRelated(document.related || [], state.selectedGraph);
   renderContentPanel(document);
 }
 
@@ -407,24 +409,75 @@ function renderReader() {
   renderSearchableText(els.readerBody, getCurrentDocumentText(), els.contentSearchInput.value);
 }
 
-function renderRelated(related) {
-  if (!related.length) {
-    els.relatedList.innerHTML = '<div class="placeholder">暂无关联内容。</div>';
-    return;
-  }
+function renderRelated(related, graph = null) {
+  const relatedItems = related.length
+    ? related
+        .map((item) => `
+          <button class="related-item" type="button" data-document-id="${escapeHtml(item.target_id)}">
+            <strong>${escapeHtml(item.title || item.target_id)}</strong>
+            <span class="related-meta">score ${Number(item.score || 0).toFixed(4)}</span>
+          </button>
+        `)
+        .join("")
+    : '<div class="placeholder">暂无相似文档。</div>';
 
-  els.relatedList.innerHTML = related
-    .map((item) => `
-      <button class="related-item" type="button" data-document-id="${escapeHtml(item.target_id)}">
-        <strong>${escapeHtml(item.title || item.target_id)}</strong>
-        <span class="related-meta">score ${Number(item.score || 0).toFixed(4)}</span>
-      </button>
-    `)
-    .join("");
+  const graphLoading = graph === null && Boolean(state.selectedDocumentId);
+  const nodes = graph?.nodes || [];
+  const edges = graph?.edges || [];
+  const graphItems = renderGraphItems(nodes, edges, graphLoading);
+  els.relatedList.innerHTML = `
+    <section class="relation-section">
+      <div class="relation-section-title">相似文档</div>
+      ${relatedItems}
+    </section>
+    <section class="relation-section">
+      <div class="relation-section-title">实体关系</div>
+      ${graphItems}
+    </section>
+  `;
 
   els.relatedList.querySelectorAll("[data-document-id]").forEach((node) => {
     node.addEventListener("click", () => loadDocument(node.dataset.documentId));
   });
+}
+
+function renderGraphItems(nodes, edges, loading = false) {
+  if (loading) {
+    return '<div class="placeholder">正在加载实体关系。</div>';
+  }
+  if (!nodes.length && !edges.length) {
+    return '<div class="placeholder">暂无实体关系。</div>';
+  }
+
+  const nodeItems = nodes
+    .map((node) => `
+      <span class="graph-node">
+        <strong>${escapeHtml(node.name || node.title || node.id)}</strong>
+        <span>${escapeHtml(node.type || "entity")}</span>
+        ${node.mention_count ? `<span>${Number(node.mention_count)} mentions</span>` : ""}
+      </span>
+    `)
+    .join("");
+  const edgeItems = edges
+    .map((edge) => `
+      <article class="graph-edge">
+        <div class="graph-edge-main">
+          <strong>${escapeHtml(edge.source_name || edge.source)}</strong>
+          <span>${escapeHtml(edge.relation || "related_to")}</span>
+          <strong>${escapeHtml(edge.target_name || edge.target)}</strong>
+        </div>
+        <div class="related-meta">
+          confidence ${Number(edge.confidence || 0).toFixed(2)}
+          ${edge.evidence_chunk_id ? ` · chunk ${escapeHtml(edge.evidence_chunk_id)}` : ""}
+        </div>
+      </article>
+    `)
+    .join("");
+
+  return `
+    ${nodeItems ? `<div class="graph-node-list">${nodeItems}</div>` : ""}
+    ${edgeItems ? `<div class="graph-edge-list">${edgeItems}</div>` : ""}
+  `;
 }
 
 function renderIngestResult(result) {
@@ -787,12 +840,36 @@ async function loadDocument(documentId) {
     const document = await api(`/api/knowledge/documents/${documentId}`);
     state.selectedDocumentId = documentId;
     state.selectedDocument = document;
+    state.selectedGraph = null;
     els.lastDocumentId.textContent = `doc ${documentId.slice(0, 8)}`;
     renderDocumentList();
     renderDocumentDetail(document);
-    await loadChunks(documentId);
+    await Promise.all([loadChunks(documentId), loadDocumentGraph(documentId)]);
   } catch (error) {
     appendLogs("document", error.message);
+  }
+}
+
+async function loadDocumentGraph(documentId) {
+  try {
+    const graph = await api(`/api/knowledge/documents/${documentId}/graph`);
+    if (state.selectedDocumentId !== documentId) {
+      return;
+    }
+    state.selectedGraph = graph;
+    renderRelated(state.selectedDocument?.related || [], graph);
+  } catch (error) {
+    appendLogs("graph", error.message);
+    if (state.selectedDocumentId === documentId) {
+      els.relatedList.querySelectorAll(".relation-section").forEach((section) => {
+        if (section.textContent.includes("实体关系")) {
+          section.innerHTML = `
+            <div class="relation-section-title">实体关系</div>
+            <div class="placeholder">实体关系加载失败：${escapeHtml(error.message)}</div>
+          `;
+        }
+      });
+    }
   }
 }
 
