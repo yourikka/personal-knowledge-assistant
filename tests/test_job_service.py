@@ -62,6 +62,21 @@ def test_job_service_runs_ingest_in_background(tmp_path):
         service.shutdown()
 
 
+def test_job_service_lists_recent_jobs_with_events(tmp_path):
+    _, service = build_job_service(tmp_path)
+    try:
+        job = service.submit_ingest(
+            IngestRequest(source_type="text", source="任务列表测试", title="任务列表")
+        )
+        listed = service.list_jobs(limit=5)
+
+        assert listed[0]["id"] == job["id"]
+        assert listed[0]["events"]
+        assert listed[0]["events"][0]["event_type"] == "queued"
+    finally:
+        service.shutdown()
+
+
 def test_job_service_retries_failed_job(tmp_path):
     _, service = build_job_service(tmp_path)
     try:

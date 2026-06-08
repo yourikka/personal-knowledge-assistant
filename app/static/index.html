@@ -47,6 +47,10 @@
           <span>◷</span>
           <strong>记忆管理</strong>
         </button>
+        <button class="nav-item" type="button" data-scroll-target="jobs-panel">
+          <span>↻</span>
+          <strong>任务中心</strong>
+        </button>
       </nav>
 
       <section class="sidebar-section">
@@ -105,6 +109,7 @@
 
           <div class="composer-footer">
             <button class="primary-action" type="submit">开始入库</button>
+            <button class="secondary-action" type="button" id="submit-async-ingest">后台入库</button>
             <span class="footer-note">入库后会自动生成切片、摘要、标签和关联。</span>
           </div>
         </form>
@@ -222,6 +227,23 @@
           </div>
           <div id="memory-management-list" class="memory-management-list">
             <div class="placeholder">正在加载记忆。</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="jobs-panel" class="jobs-workspace">
+        <article class="panel jobs-panel">
+          <div class="panel-head">
+            <div>
+              <h2>任务中心</h2>
+              <div class="panel-subtitle">后台入库任务可在这里查看状态、取消排队任务或重试失败任务。</div>
+            </div>
+            <div class="panel-actions">
+              <button class="refresh-link" type="button" id="refresh-jobs">刷新任务</button>
+            </div>
+          </div>
+          <div id="jobs-list" class="jobs-list">
+            <div class="placeholder">暂无任务。</div>
           </div>
         </article>
       </section>

@@ -38,6 +38,12 @@ class JobService:
         job["events"] = self.repo.list_job_events(job_id)
         return job
 
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        jobs = self.repo.list_jobs(limit=limit)
+        for job in jobs:
+            job["events"] = self.repo.list_job_events(job["id"])
+        return jobs
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         if not self.repo.get_job(job_id):
             raise ValueError("任务不存在。")

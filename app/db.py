@@ -820,6 +820,19 @@ class KnowledgeRepository:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return self._row_to_job(row) if row else None
 
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM jobs
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._row_to_job(row) for row in rows]
+
     def list_job_events(self, job_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute(

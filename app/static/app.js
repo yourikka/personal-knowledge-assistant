@@ -9,6 +9,8 @@ const state = {
   lastSessionId: "web-session",
   lastReferences: [],
   managedMemories: [],
+  jobs: [],
+  jobsRefreshTimer: null,
 };
 
 const els = {
@@ -37,6 +39,8 @@ const els = {
   sourceText: document.getElementById("source-text"),
   sourceFile: document.getElementById("source-file"),
   fileInputWrap: document.getElementById("file-input-wrap"),
+  asyncIngestButton: document.getElementById("submit-async-ingest"),
+  jobsList: document.getElementById("jobs-list"),
   queryForm: document.getElementById("query-form"),
   queryInput: document.getElementById("query-input"),
   answerContent: document.getElementById("answer-content"),
@@ -799,6 +803,178 @@ async function handleReindexDocument(documentId, button = null) {
   }
 }
 
+function buildInlineIngestRequest(formData) {
+  const sourceType = formData.get("source_type");
+  if (sourceType === "pdf" || sourceType === "image") {
+    throw new Error("文件上传暂不支持后台入库，请使用同步入库。");
+  }
+  return {
+    source_type: sourceType,
+    source: formData.get("source"),
+    title: formData.get("title") || null,
+    metadata: {},
+  };
+}
+
+function jobTitle(job) {
+  const payload = job.payload || {};
+  return payload.title || payload.source_type || job.id;
+}
+
+function renderJobs(jobs) {
+  state.jobs = jobs || [];
+  if (!state.jobs.length) {
+    els.jobsList.innerHTML = '<div class="placeholder">暂无任务。</div>';
+    return;
+  }
+
+  els.jobsList.innerHTML = state.jobs
+    .map((job) => {
+      const events = (job.events || []).slice(-4);
+      const resultDocId = job.result?.document_id;
+      const canCancel = job.status === "queued";
+      const canRetry = job.status === "failed";
+      return `
+        <article class="job-card">
+          <div class="job-card-head">
+            <div>
+              <div class="job-title">${escapeHtml(jobTitle(job))}</div>
+              <div class="job-card-meta">
+                <span>${escapeHtml(job.id)}</span>
+                <span>attempts ${Number(job.attempts || 0)}</span>
+                <span>${escapeHtml(formatDateTime(job.updated_at || job.created_at))}</span>
+              </div>
+            </div>
+            <span class="job-status ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span>
+          </div>
+          <div class="job-card-meta">
+            <span>${escapeHtml(job.job_type)}</span>
+            <span>${escapeHtml(job.payload?.source_type || "unknown")}</span>
+            ${resultDocId ? `<span>doc ${escapeHtml(resultDocId.slice(0, 8))}</span>` : ""}
+            ${job.error ? `<span>${escapeHtml(job.error)}</span>` : ""}
+          </div>
+          <div class="job-events">
+            ${
+              events.length
+                ? events.map((event) => `<span class="job-event">${escapeHtml(event.event_type)} · ${escapeHtml(event.message)}</span>`).join("")
+                : '<span class="placeholder">暂无事件。</span>'
+            }
+          </div>
+          <div class="job-actions">
+            <button class="job-action" type="button" data-job-refresh-id="${escapeHtml(job.id)}">查看</button>
+            ${canCancel ? `<button class="job-action" type="button" data-job-cancel-id="${escapeHtml(job.id)}">取消</button>` : ""}
+            ${canRetry ? `<button class="job-action" type="button" data-job-retry-id="${escapeHtml(job.id)}">重试</button>` : ""}
+            ${resultDocId ? `<button class="job-action" type="button" data-job-document-id="${escapeHtml(resultDocId)}">打开文档</button>` : ""}
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  els.jobsList.querySelectorAll("[data-job-refresh-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      void refreshSingleJob(node.dataset.jobRefreshId);
+    });
+  });
+  els.jobsList.querySelectorAll("[data-job-cancel-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      void handleCancelJob(node.dataset.jobCancelId);
+    });
+  });
+  els.jobsList.querySelectorAll("[data-job-retry-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      void handleRetryJob(node.dataset.jobRetryId);
+    });
+  });
+  els.jobsList.querySelectorAll("[data-job-document-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      void loadDocument(node.dataset.jobDocumentId);
+    });
+  });
+}
+
+async function refreshJobs() {
+  try {
+    const jobs = await api("/api/jobs?limit=12");
+    renderJobs(jobs);
+    scheduleJobRefresh(jobs);
+  } catch (error) {
+    appendLogs("jobs", error.message);
+    els.jobsList.innerHTML = `<div class="placeholder">任务加载失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function refreshSingleJob(jobId) {
+  if (!jobId) {
+    return;
+  }
+  try {
+    const job = await api(`/api/jobs/${jobId}`);
+    const others = state.jobs.filter((item) => item.id !== job.id);
+    renderJobs([job, ...others]);
+    scheduleJobRefresh(state.jobs);
+  } catch (error) {
+    appendLogs("jobs", error.message);
+  }
+}
+
+function scheduleJobRefresh(jobs = state.jobs) {
+  window.clearTimeout(state.jobsRefreshTimer);
+  const hasActive = jobs.some((job) => job.status === "queued" || job.status === "running");
+  if (hasActive) {
+    state.jobsRefreshTimer = window.setTimeout(() => {
+      void refreshJobs();
+    }, 1800);
+  }
+}
+
+async function handleAsyncIngest() {
+  const formData = new FormData(els.ingestForm);
+  try {
+    const request = buildInlineIngestRequest(formData);
+    const idempotencyKey = request.title ? `web-${request.source_type}-${request.title}` : null;
+    const job = await api("/api/jobs/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request, idempotency_key: idempotencyKey }),
+    });
+    appendLogs("jobs", [`已提交后台任务 ${job.id}`, `status ${job.status}`]);
+    await refreshJobs();
+    document.getElementById("jobs-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    appendLogs("jobs", error.message);
+    window.alert(`后台入库失败：${error.message}`);
+  }
+}
+
+async function handleCancelJob(jobId) {
+  if (!jobId) {
+    return;
+  }
+  try {
+    const job = await api(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+    appendLogs("jobs", `已取消任务 ${job.id}`);
+    await refreshJobs();
+  } catch (error) {
+    appendLogs("jobs", error.message);
+    window.alert(`取消任务失败：${error.message}`);
+  }
+}
+
+async function handleRetryJob(jobId) {
+  if (!jobId) {
+    return;
+  }
+  try {
+    const job = await api(`/api/jobs/${jobId}/retry`, { method: "POST" });
+    appendLogs("jobs", `已重试任务 ${job.id}`);
+    await refreshJobs();
+  } catch (error) {
+    appendLogs("jobs", error.message);
+    window.alert(`重试任务失败：${error.message}`);
+  }
+}
+
 async function handleIngest(event) {
   event.preventDefault();
   resetPipeline();
@@ -821,12 +997,7 @@ async function handleIngest(event) {
       result = await api("/api/knowledge/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source_type: sourceType,
-          source: formData.get("source"),
-          title: title || null,
-          metadata: {},
-        }),
+        body: JSON.stringify(buildInlineIngestRequest(formData)),
       });
     }
 
@@ -1006,6 +1177,12 @@ function bindQuickActions() {
   });
 
   document.getElementById("refresh-documents").addEventListener("click", refreshDocuments);
+  document.getElementById("refresh-jobs").addEventListener("click", () => {
+    void refreshJobs();
+  });
+  els.asyncIngestButton.addEventListener("click", () => {
+    void handleAsyncIngest();
+  });
   document.getElementById("refresh-memories").addEventListener("click", () => {
     void refreshManagedMemories();
   });
@@ -1088,6 +1265,7 @@ async function boot() {
   await refreshHealth();
   await refreshDocuments();
   await refreshManagedMemories();
+  await refreshJobs();
 }
 
 boot();

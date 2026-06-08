@@ -109,6 +109,11 @@ def submit_ingest_job(request: AsyncIngestRequest) -> JobResponse:
         raise HTTPException(status_code=500, detail=f"提交任务失败：{error}") from error
 
 
+@app.get("/api/jobs", response_model=list[JobResponse])
+def list_jobs(limit: int = 20) -> list[JobResponse]:
+    return [JobResponse(**job) for job in job_service.list_jobs(limit=limit)]
+
+
 @app.get("/api/jobs/{job_id}", response_model=JobResponse)
 def get_job(job_id: str) -> JobResponse:
     try:
