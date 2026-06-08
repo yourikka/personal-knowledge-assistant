@@ -29,6 +29,7 @@ class KnowledgePipeline:
     def __init__(self, settings: Settings, repo: KnowledgeRepository, vector_store: VectorStore) -> None:
         self.repo = repo
         self.vector_store = vector_store
+        self._bootstrapped = False
         self.openai_service = OpenAIService(settings)
         self.acquisition = AcquisitionAgent(settings, repo)
         self.parser = ParserAgent()
@@ -72,6 +73,8 @@ class KnowledgePipeline:
         self.bootstrap()
 
     def bootstrap(self) -> None:
+        if self._bootstrapped:
+            return
         self.vector_store.reset()
         for document in self.repo.iter_documents():
             chunks = self.repo.list_document_chunks(document["id"])
@@ -112,6 +115,7 @@ class KnowledgePipeline:
                     },
                 )
         self.memory_service.bootstrap()
+        self._bootstrapped = True
 
     def ingest(self, request: IngestRequest) -> dict:
         state = self._coerce_state(self.ingest_graph.invoke(PipelineState(request=request)))

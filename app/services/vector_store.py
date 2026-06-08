@@ -8,8 +8,10 @@ from .text_utils import cosine_similarity, overlap_score
 
 try:
     import chromadb
+    from chromadb.errors import InvalidDimensionException
 except ImportError:
     chromadb = None
+    InvalidDimensionException = None
 
 
 class VectorStore:
@@ -19,12 +21,15 @@ class VectorStore:
         self.local_embeddings: dict[str, list[float]] = {}
         self.local_texts: dict[str, str] = {}
         self.local_metadata: dict[str, dict[str, Any]] = {}
+        self.client = None
         self.collection = None
+        self.collection_name = "knowledge_documents"
 
         if self.enable_chroma:
             os.makedirs(chroma_dir, exist_ok=True)
-            client = chromadb.PersistentClient(path=chroma_dir)
-            self.collection = client.get_or_create_collection(name="knowledge_documents")
+            self.client = chromadb.PersistentClient(path=chroma_dir)
+            self.collection = self.client.get_or_create_collection(name=self.collection_name)
+            self._ensure_collection_dimension()
 
     def add_text(self, item_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
         embedding = self.embedding_service.embed(text)
@@ -33,7 +38,7 @@ class VectorStore:
         self.local_metadata[item_id] = metadata or {}
 
         if self.collection is not None:
-            self.collection.upsert(
+            self._upsert_collection(
                 ids=[item_id],
                 documents=[text],
                 metadatas=[metadata or {}],
@@ -99,11 +104,20 @@ class VectorStore:
         n_results = min(max(top_k * 2, 6), max(1, len(self.local_embeddings)))
         chroma_ranked: dict[str, float] = {item["id"]: item["score"] for item in local_ranked}
         where = {"kind": kind} if kind else None
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-            where=where,
-        )
+        try:
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where=where,
+            )
+        except InvalidDimensionException:
+            self._recreate_collection()
+            self._sync_collection()
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where=where,
+            )
         ids = results.get("ids", [[]])[0]
         distances = results.get("distances", [[]])[0]
         for document_id, distance in zip(ids, distances):
@@ -120,3 +134,58 @@ class VectorStore:
         vector_score = cosine_similarity(self.embedding_service.embed(left_text), self.embedding_service.embed(right_text))
         lexical_score = overlap_score(left_text, right_text)
         return round(vector_score * 0.7 + lexical_score * 0.3, 4)
+
+    def _expected_embedding_dimension(self) -> int:
+        return len(self.embedding_service.embed(""))
+
+    def _collection_dimension(self) -> int | None:
+        if self.collection is None:
+            return None
+        model = getattr(self.collection, "_model", None)
+        return getattr(model, "dimension", None)
+
+    def _ensure_collection_dimension(self) -> None:
+        actual = self._collection_dimension()
+        expected = self._expected_embedding_dimension()
+        if actual is not None and actual != expected:
+            # Chroma collection dimension is fixed after the first insert. If the
+            # embedding configuration changes, rebuild the persisted collection and
+            # let pipeline bootstrap repopulate it from SQLite.
+            self._recreate_collection()
+
+    def _recreate_collection(self) -> None:
+        if self.client is None:
+            return
+        try:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
+            pass
+        self.collection = self.client.get_or_create_collection(name=self.collection_name)
+
+    def _sync_collection(self) -> None:
+        if self.collection is None or not self.local_embeddings:
+            return
+        self.collection.upsert(
+            ids=list(self.local_embeddings.keys()),
+            documents=[self.local_texts[item_id] for item_id in self.local_embeddings],
+            metadatas=[self.local_metadata[item_id] for item_id in self.local_embeddings],
+            embeddings=[self.local_embeddings[item_id] for item_id in self.local_embeddings],
+        )
+
+    def _upsert_collection(
+        self,
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, Any]],
+        embeddings: list[list[float]],
+    ) -> None:
+        try:
+            self.collection.upsert(
+                ids=ids,
+                documents=documents,
+                metadatas=metadatas,
+                embeddings=embeddings,
+            )
+        except InvalidDimensionException:
+            self._recreate_collection()
+            self._sync_collection()
