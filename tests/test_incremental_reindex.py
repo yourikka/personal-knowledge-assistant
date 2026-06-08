@@ -77,3 +77,21 @@ def test_replace_links_removes_stale_reverse_edges(tmp_path):
 
     assert repo.list_links("doc-b") == []
     assert [link["target_id"] for link in repo.list_links("doc-a")] == ["doc-c"]
+
+
+def test_rebuild_links_refreshes_all_document_links(tmp_path):
+    repo, _, pipeline = build_pipeline(tmp_path)
+    first = pipeline.ingest(
+        IngestRequest(source_type="text", source="LangGraph 用于多 Agent 编排。", title="LangGraph A")
+    )
+    second = pipeline.ingest(
+        IngestRequest(source_type="text", source="LangGraph 支持流程节点编排。", title="LangGraph B")
+    )
+    repo.replace_links(first["document_id"], [])
+
+    result = pipeline.rebuild_links()
+
+    assert result["status"] == "ok"
+    assert result["documents"] == 2
+    assert result["links_rebuilt"] > 0
+    assert repo.list_links(first["document_id"]) or repo.list_links(second["document_id"])

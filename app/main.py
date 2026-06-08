@@ -109,6 +109,14 @@ def submit_ingest_job(request: AsyncIngestRequest) -> JobResponse:
         raise HTTPException(status_code=500, detail=f"提交任务失败：{error}") from error
 
 
+@app.post("/api/jobs/reindex", response_model=JobResponse)
+def submit_reindex_job() -> JobResponse:
+    try:
+        return JobResponse(**job_service.submit_reindex(idempotency_key=None))
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"提交重建任务失败：{error}") from error
+
+
 @app.get("/api/jobs", response_model=list[JobResponse])
 def list_jobs(limit: int = 20) -> list[JobResponse]:
     return [JobResponse(**job) for job in job_service.list_jobs(limit=limit)]

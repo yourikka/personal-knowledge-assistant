@@ -77,6 +77,30 @@ def test_job_service_lists_recent_jobs_with_events(tmp_path):
         service.shutdown()
 
 
+def test_job_service_runs_reindex_in_background(tmp_path):
+    repo, service = build_job_service(tmp_path)
+    try:
+        first = service.submit_ingest(
+            IngestRequest(source_type="text", source="LangGraph 多 Agent 编排", title="Job Reindex A")
+        )
+        second = service.submit_ingest(
+            IngestRequest(source_type="text", source="LangGraph 流程节点编排", title="Job Reindex B")
+        )
+        wait_for_terminal(service, first["id"])
+        wait_for_terminal(service, second["id"])
+
+        reindex = service.submit_reindex()
+        finished = wait_for_terminal(service, reindex["id"])
+
+        assert finished["status"] == "succeeded"
+        assert finished["job_type"] == "reindex"
+        assert finished["result"]["documents"] >= 2
+        assert finished["result"]["links_rebuilt"] >= 0
+        assert len(repo.list_jobs(limit=5)) >= 3
+    finally:
+        service.shutdown()
+
+
 def test_job_service_retries_failed_job(tmp_path):
     _, service = build_job_service(tmp_path)
     try:

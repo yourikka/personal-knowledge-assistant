@@ -596,6 +596,7 @@ button:focus {
 }
 
 .detail-actions .refresh-link:disabled,
+.panel-head .refresh-link:disabled,
 .query-controls button:disabled {
   cursor: wait;
   opacity: 0.68;

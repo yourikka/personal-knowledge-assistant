@@ -803,6 +803,29 @@ async function handleReindexDocument(documentId, button = null) {
   }
 }
 
+async function handleRebuildLinks(button = null) {
+  const previousText = button?.textContent || "后台重建全库关联";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "提交中";
+  }
+
+  try {
+    const job = await api("/api/jobs/reindex", { method: "POST" });
+    appendLogs("reindex", [`已提交全库关联重建任务 ${job.id}`, `status ${job.status}`]);
+    await refreshJobs();
+    document.getElementById("jobs-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    appendLogs("reindex", error.message);
+    window.alert(`提交全库关联重建失败：${error.message}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
+}
+
 function buildInlineIngestRequest(formData) {
   const sourceType = formData.get("source_type");
   if (sourceType === "pdf" || sourceType === "image") {
@@ -818,6 +841,9 @@ function buildInlineIngestRequest(formData) {
 
 function jobTitle(job) {
   const payload = job.payload || {};
+  if (job.job_type === "reindex") {
+    return "全库关联重建";
+  }
   return payload.title || payload.source_type || job.id;
 }
 
@@ -849,7 +875,7 @@ function renderJobs(jobs) {
           </div>
           <div class="job-card-meta">
             <span>${escapeHtml(job.job_type)}</span>
-            <span>${escapeHtml(job.payload?.source_type || "unknown")}</span>
+            <span>${escapeHtml(job.payload?.source_type || job.payload?.scope || "unknown")}</span>
             ${resultDocId ? `<span>doc ${escapeHtml(resultDocId.slice(0, 8))}</span>` : ""}
             ${job.error ? `<span>${escapeHtml(job.error)}</span>` : ""}
           </div>
@@ -1177,6 +1203,9 @@ function bindQuickActions() {
   });
 
   document.getElementById("refresh-documents").addEventListener("click", refreshDocuments);
+  document.getElementById("rebuild-links").addEventListener("click", (event) => {
+    void handleRebuildLinks(event.currentTarget);
+  });
   document.getElementById("refresh-jobs").addEventListener("click", () => {
     void refreshJobs();
   });
