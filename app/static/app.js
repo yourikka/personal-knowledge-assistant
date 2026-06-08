@@ -452,7 +452,9 @@ async function refreshHealth() {
   try {
     const health = await api("/health");
     els.healthPill.textContent = `system: ${health.status}`;
-    els.runtimeMode.textContent = health.chroma_enabled ? "FastAPI + Chroma" : "FastAPI + Local Vector";
+    const indexItems = health.vector_store?.local_items ?? 0;
+    const docs = health.repository?.documents ?? 0;
+    els.runtimeMode.textContent = `${health.chroma_enabled ? "FastAPI + Chroma" : "FastAPI + Local Vector"} · ${docs} docs · ${indexItems} indexed`;
   } catch (error) {
     els.healthPill.textContent = "system: offline";
     appendLogs("health", error.message);

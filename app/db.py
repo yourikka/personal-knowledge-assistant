@@ -295,6 +295,16 @@ class KnowledgeRepository:
             rows = conn.execute("SELECT * FROM documents ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_document(row) for row in rows]
 
+    def stats(self) -> dict[str, int]:
+        with self.connect() as conn:
+            return {
+                "documents": int(conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]),
+                "chunks": int(conn.execute("SELECT COUNT(*) FROM document_chunks").fetchone()[0]),
+                "sections": int(conn.execute("SELECT COUNT(*) FROM document_sections").fetchone()[0]),
+                "links": int(conn.execute("SELECT COUNT(*) FROM document_links").fetchone()[0]),
+                "memories": int(conn.execute("SELECT COUNT(*) FROM memory_records").fetchone()[0]),
+            }
+
     def delete_document(self, document_id: str) -> bool:
         with self.connect() as conn:
             exists = conn.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone()

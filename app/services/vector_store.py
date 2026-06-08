@@ -75,6 +75,18 @@ class VectorStore:
         if self.collection is not None and ids:
             self.collection.delete(ids=ids)
 
+    def stats(self) -> dict[str, Any]:
+        by_kind: dict[str, int] = {}
+        for metadata in self.local_metadata.values():
+            kind = str(metadata.get("kind") or "unknown")
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+        chroma_items = self.collection.count() if self.collection is not None else 0
+        return {
+            "local_items": len(self.local_embeddings),
+            "chroma_items": int(chroma_items),
+            "by_kind": by_kind,
+        }
+
     def search(
         self,
         query: str,

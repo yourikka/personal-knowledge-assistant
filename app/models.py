@@ -147,6 +147,8 @@ class HealthResponse(BaseModel):
     status: str
     chroma_enabled: bool
     playwright_enabled: bool
+    repository: dict[str, int] = Field(default_factory=dict)
+    vector_store: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReindexResponse(BaseModel):

@@ -73,6 +73,8 @@ def health() -> HealthResponse:
         status="ok",
         chroma_enabled=vector_store.collection is not None,
         playwright_enabled=settings.enable_playwright,
+        repository=repo.stats(),
+        vector_store=vector_store.stats(),
     )
 
 
