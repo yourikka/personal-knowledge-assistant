@@ -648,6 +648,28 @@ button:focus {
   white-space: pre-wrap;
 }
 
+.feedback-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.feedback-action {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 11px;
+  background: #fff;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.feedback-action:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
 .references-list,
 .related-list,
 .log-console {

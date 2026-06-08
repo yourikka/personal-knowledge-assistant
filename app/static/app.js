@@ -5,6 +5,9 @@ const state = {
   contentView: "cleaned",
   queryRunId: 0,
   queryAbortController: null,
+  lastQuery: "",
+  lastSessionId: "web-session",
+  lastReferences: [],
 };
 
 const els = {
@@ -36,6 +39,7 @@ const els = {
   queryForm: document.getElementById("query-form"),
   queryInput: document.getElementById("query-input"),
   answerContent: document.getElementById("answer-content"),
+  feedbackBar: document.getElementById("feedback-bar"),
   memoriesList: document.getElementById("memories-list"),
   referencesList: document.getElementById("references-list"),
   imageForm: document.getElementById("image-form"),
@@ -453,6 +457,7 @@ function renderChunks(chunks) {
 }
 
 function renderReferences(references) {
+  state.lastReferences = references || [];
   if (!references.length) {
     els.referencesList.innerHTML = '<div class="placeholder">暂无引用。</div>';
     return;
@@ -471,8 +476,74 @@ function renderReferences(references) {
     .join("");
 
   els.referencesList.querySelectorAll("[data-document-id]").forEach((node) => {
-    node.addEventListener("click", () => loadDocument(node.dataset.documentId));
+    node.addEventListener("click", () => {
+      void recordReferenceClick(node.dataset.documentId);
+      loadDocument(node.dataset.documentId);
+    });
   });
+}
+
+function renderFeedbackBar(enabled = false) {
+  if (!els.feedbackBar) {
+    return;
+  }
+  if (!enabled) {
+    els.feedbackBar.innerHTML = "";
+    return;
+  }
+  els.feedbackBar.innerHTML = `
+    <button class="feedback-action" type="button" data-feedback-rating="1">有用</button>
+    <button class="feedback-action" type="button" data-feedback-rating="-1">无关</button>
+  `;
+  els.feedbackBar.querySelectorAll("[data-feedback-rating]").forEach((node) => {
+    node.addEventListener("click", () => {
+      void recordQueryFeedback(Number(node.dataset.feedbackRating || 0));
+    });
+  });
+}
+
+async function recordReferenceClick(documentId) {
+  if (!documentId || !state.lastSessionId) {
+    return;
+  }
+  try {
+    await api("/api/personalization/clicks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: state.lastSessionId,
+        document_id: documentId,
+        query: state.lastQuery || "",
+      }),
+    });
+    appendLogs("personalization", `已记录引用点击 ${documentId.slice(0, 8)}`);
+  } catch (error) {
+    appendLogs("personalization", `引用点击记录失败：${error.message}`);
+  }
+}
+
+async function recordQueryFeedback(rating) {
+  if (!state.lastQuery || !state.lastSessionId) {
+    return;
+  }
+  const documentId = state.lastReferences[0]?.id || null;
+  try {
+    await api("/api/personalization/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: state.lastSessionId,
+        query: state.lastQuery,
+        rating,
+        document_id: documentId,
+        comment: rating > 0 ? "web: useful answer" : "web: irrelevant answer",
+      }),
+    });
+    appendLogs("personalization", rating > 0 ? "已记录正向反馈。" : "已记录负向反馈。");
+    renderFeedbackBar(false);
+  } catch (error) {
+    appendLogs("personalization", `反馈记录失败：${error.message}`);
+  }
 }
 
 function renderMemories(memories) {
@@ -656,6 +727,9 @@ async function handleQuery(event) {
     top_k: Number(formData.get("top_k") || 3),
     session_id: formData.get("session_id") || null,
   };
+  state.lastQuery = query;
+  state.lastSessionId = request.session_id || "web-session";
+  state.lastReferences = [];
   state.queryRunId += 1;
   const runId = state.queryRunId;
   state.queryAbortController?.abort();
@@ -671,6 +745,7 @@ async function handleQuery(event) {
 
   try {
     els.answerContent.textContent = "正在检索...";
+    renderFeedbackBar(false);
     renderMemories([]);
     renderReferences([]);
     let receivedDelta = false;
@@ -712,6 +787,7 @@ async function handleQuery(event) {
     if (!els.answerContent.textContent.trim()) {
       els.answerContent.textContent = "暂无答案。";
     }
+    renderFeedbackBar(true);
   } catch (error) {
     if (error.name === "AbortError" || !isCurrentRun()) {
       return;
@@ -725,6 +801,7 @@ async function handleQuery(event) {
       els.answerContent.textContent = result.answer || "暂无答案。";
       renderMemories(result.memories || []);
       renderReferences(result.references || []);
+      renderFeedbackBar(true);
       appendLogs("query", ["流式检索失败，已切换普通检索。", ...(result.logs || [])]);
     } catch (fallbackError) {
       appendLogs("query", [error.message, fallbackError.message]);
