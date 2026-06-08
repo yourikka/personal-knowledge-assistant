@@ -574,6 +574,19 @@ button:focus {
   margin-top: 10px;
 }
 
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.detail-actions .refresh-link:disabled,
+.query-controls button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .badge,
 .detail-chip {
   display: inline-flex;

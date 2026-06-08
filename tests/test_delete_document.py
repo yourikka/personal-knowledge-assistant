@@ -14,6 +14,8 @@ def build_pipeline(tmp_path):
         sqlite_path=str(sqlite_path),
         chroma_dir=str(chroma_dir),
         enable_chroma=False,
+        embedding_provider="local",
+        embedding_api_key="",
         openai_api_key="",
     )
     repo = KnowledgeRepository(settings.sqlite_path)

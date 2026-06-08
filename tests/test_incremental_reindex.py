@@ -13,6 +13,8 @@ def build_pipeline(tmp_path):
         sqlite_path=str(tmp_path / "knowledge.db"),
         chroma_dir=str(tmp_path / "chroma"),
         enable_chroma=False,
+        embedding_provider="local",
+        embedding_api_key="",
         openai_api_key="",
         related_score_threshold=0.01,
     )

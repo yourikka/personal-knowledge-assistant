@@ -237,7 +237,13 @@ function renderDocumentDetail(document) {
     <div class="badge-row">
       <span class="badge">${escapeHtml(document.source_uri)}</span>
     </div>
+    <div class="detail-actions">
+      <button class="refresh-link compact" type="button" data-reindex-id="${escapeHtml(document.id)}">重建索引</button>
+    </div>
   `;
+  els.documentDetail.querySelector("[data-reindex-id]")?.addEventListener("click", (event) => {
+    void handleReindexDocument(event.currentTarget.dataset.reindexId, event.currentTarget);
+  });
 
   renderRelated(document.related || []);
   renderContentPanel(document);
@@ -665,6 +671,38 @@ async function handleDeleteDocument(documentId) {
   } catch (error) {
     appendLogs("delete", error.message);
     window.alert(`删除失败：${error.message}`);
+  }
+}
+
+async function handleReindexDocument(documentId, button = null) {
+  if (!documentId) {
+    return;
+  }
+  const previousText = button?.textContent || "重建索引";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "重建中";
+  }
+
+  try {
+    const result = await api(`/api/knowledge/documents/${documentId}/reindex`, { method: "POST" });
+    appendLogs("reindex", [
+      `已重建 ${documentId}`,
+      `chunks ${result.chunks}`,
+      `sections ${result.sections}`,
+      `links ${result.links_rebuilt}`,
+    ]);
+    await refreshHealth();
+    await refreshDocuments();
+    await loadDocument(documentId);
+  } catch (error) {
+    appendLogs("reindex", error.message);
+    window.alert(`重建索引失败：${error.message}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
   }
 }
 
