@@ -3,6 +3,8 @@ const state = {
   selectedDocumentId: null,
   selectedDocument: null,
   contentView: "cleaned",
+  queryRunId: 0,
+  queryAbortController: null,
 };
 
 const els = {
@@ -61,6 +63,63 @@ async function api(url, options = {}) {
     throw error;
   }
   return payload;
+}
+
+async function streamApi(url, payload, handlers = {}, options = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const block of events) {
+      dispatchStreamEvent(block, handlers);
+    }
+  }
+
+  if (buffer.trim()) {
+    dispatchStreamEvent(buffer, handlers);
+  }
+}
+
+function dispatchStreamEvent(block, handlers) {
+  const lines = block.split("\n");
+  const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
+  const data = lines
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .join("\n");
+  if (!data) {
+    return;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch {
+    payload = data;
+  }
+  if (event === "error") {
+    throw new Error(payload.error || "流式检索失败。");
+  }
+  handlers[event]?.(payload);
 }
 
 function appendLogs(prefix, logs) {
@@ -587,25 +646,100 @@ async function handleIngest(event) {
 async function handleQuery(event) {
   event.preventDefault();
   const formData = new FormData(els.queryForm);
+  const query = String(formData.get("query") || "").trim();
+  if (!query) {
+    els.answerContent.textContent = "请输入问题。";
+    return;
+  }
+  const request = {
+    query,
+    top_k: Number(formData.get("top_k") || 3),
+    session_id: formData.get("session_id") || null,
+  };
+  state.queryRunId += 1;
+  const runId = state.queryRunId;
+  state.queryAbortController?.abort();
+  const controller = new AbortController();
+  state.queryAbortController = controller;
+  const submitButton = els.queryForm.querySelector('button[type="submit"]');
+  const previousButtonText = submitButton?.textContent || "提问";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "检索中";
+  }
+  const isCurrentRun = () => state.queryRunId === runId;
+
   try {
-    const result = await api("/api/knowledge/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: formData.get("query"),
-        top_k: Number(formData.get("top_k") || 3),
-        session_id: formData.get("session_id") || null,
-      }),
-    });
-    els.answerContent.textContent = result.answer || "暂无答案。";
-    renderMemories(result.memories || []);
-    renderReferences(result.references || []);
-    appendLogs("query", result.logs || []);
-  } catch (error) {
-    appendLogs("query", error.message);
-    els.answerContent.textContent = `检索失败：${error.message}`;
+    els.answerContent.textContent = "正在检索...";
     renderMemories([]);
     renderReferences([]);
+    let receivedDelta = false;
+    await streamApi("/api/knowledge/query/stream", request, {
+      delta: (text) => {
+        if (!isCurrentRun()) {
+          return;
+        }
+        if (!receivedDelta) {
+          els.answerContent.textContent = "";
+          receivedDelta = true;
+        }
+        els.answerContent.textContent += text;
+      },
+      references: (references) => {
+        if (isCurrentRun()) {
+          renderReferences(references || []);
+        }
+      },
+      memories: (memories) => {
+        if (isCurrentRun()) {
+          renderMemories(memories || []);
+        }
+      },
+      status: (message) => {
+        if (isCurrentRun() && !receivedDelta) {
+          els.answerContent.textContent = message || "正在检索...";
+        }
+      },
+      logs: (logs) => {
+        if (isCurrentRun()) {
+          appendLogs("query", logs || []);
+        }
+      },
+    }, { signal: controller.signal });
+    if (!isCurrentRun()) {
+      return;
+    }
+    if (!els.answerContent.textContent.trim()) {
+      els.answerContent.textContent = "暂无答案。";
+    }
+  } catch (error) {
+    if (error.name === "AbortError" || !isCurrentRun()) {
+      return;
+    }
+    try {
+      const result = await api("/api/knowledge/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      els.answerContent.textContent = result.answer || "暂无答案。";
+      renderMemories(result.memories || []);
+      renderReferences(result.references || []);
+      appendLogs("query", ["流式检索失败，已切换普通检索。", ...(result.logs || [])]);
+    } catch (fallbackError) {
+      appendLogs("query", [error.message, fallbackError.message]);
+      els.answerContent.textContent = `检索失败：${fallbackError.message}`;
+      renderMemories([]);
+      renderReferences([]);
+    }
+  } finally {
+    if (isCurrentRun()) {
+      state.queryAbortController = null;
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = previousButtonText;
+      }
+    }
   }
 }
 

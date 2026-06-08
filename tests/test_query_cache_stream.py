@@ -52,5 +52,6 @@ def test_pipeline_query_uses_rag_cache_and_streams_events(tmp_path):
 
     assert first["references"]
     assert any("cache: 命中高频 Query 缓存" in log for log in second["logs"])
-    assert events[0]["event"] == "delta"
+    assert events[0]["event"] == "status"
+    assert any(event["event"] == "delta" for event in events)
     assert events[-1]["event"] == "done"
