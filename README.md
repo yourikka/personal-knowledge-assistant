@@ -78,7 +78,9 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 
 说明：
 
-- 根路径 `/` 直接提供 Web 工作台，区块按内容入库、处理流水线、文档内容、切片结果、分类摘要、知识关联和检索问答组织。
+- 根路径 `/` 直接提供 Web 工作台，区块按内容入库、处理流水线、文档内容、切片结果、分类摘要、知识关联、检索问答、记忆管理和任务中心组织。
+- Web 工作台支持同步入库和后台入库；后台任务可在“任务中心”查看状态、取消排队任务、重试失败任务，并可提交全库关联重建任务。
+- Web 工作台支持长期记忆管理；可以按会话查看当前会话和全局记忆，并删除过期或错误记忆。
 - 启动服务后，用浏览器访问 `http://127.0.0.1:8010/` 即可使用。
 
 ## 主要接口
@@ -122,10 +124,46 @@ curl -X POST http://127.0.0.1:8010/api/jobs/ingest \
 curl http://127.0.0.1:8010/api/jobs/{job_id}
 ```
 
+查询最近任务：
+
+```bash
+curl http://127.0.0.1:8010/api/jobs?limit=10
+```
+
+取消排队任务：
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/jobs/{job_id}/cancel
+```
+
+重试失败任务：
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/jobs/{job_id}/retry
+```
+
+### 后台全库关联重建
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/jobs/reindex
+```
+
+说明：该接口会创建后台任务，适合在批量入库、关联策略调整或索引修复后重建全库文档关联。同步兼容接口仍保留为 `POST /api/knowledge/reindex`。
+
 ### 单文档增量索引
 
 ```bash
 curl -X POST http://127.0.0.1:8010/api/knowledge/documents/{document_id}/reindex
+```
+
+### 记忆管理
+
+```bash
+curl 'http://127.0.0.1:8010/api/memories?session_id=web-session&limit=20'
+```
+
+```bash
+curl -X DELETE http://127.0.0.1:8010/api/memories/{memory_id}
 ```
 
 ### 流式问答
@@ -259,8 +297,9 @@ agent_acquisition
 - 支持查询文档列表、文档详情、关联结果和自然语言问答
 - 支持调用生图 Agent 生成知识库封面图或概念图
 - 支持会话历史和长期记忆写入 SQLite，用于多轮上下文增强
-- 支持单机异步入库任务，任务状态和事件写入 SQLite
-- 支持单文档 reindex，避免为了一个文档变更触发全库重建
+- 支持 Web 记忆管理，长期记忆可枚举、按会话筛选和删除
+- 支持单机异步入库和全库关联重建任务，任务状态和事件写入 SQLite，并可在 Web 任务中心查看、取消和重试
+- 支持单文档 reindex，避免为了一个文档变更触发全库重建；也支持后台全库关联重建
 - PDF 解析会尽量恢复页边界、标题和表格行；图片解析会记录 OCR 状态、尺寸和图片摘要
 - OCR、Playwright、Chroma 都是可选能力，不会阻塞基础功能启动
 - 支持 `python scripts/smoke_test.py` 做基础回归测试
