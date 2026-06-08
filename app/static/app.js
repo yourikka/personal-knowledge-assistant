@@ -8,6 +8,7 @@ const state = {
   lastQuery: "",
   lastSessionId: "web-session",
   lastReferences: [],
+  managedMemories: [],
 };
 
 const els = {
@@ -41,6 +42,10 @@ const els = {
   answerContent: document.getElementById("answer-content"),
   feedbackBar: document.getElementById("feedback-bar"),
   memoriesList: document.getElementById("memories-list"),
+  memoryManagementList: document.getElementById("memory-management-list"),
+  memorySessionInput: document.getElementById("memory-session-input"),
+  memoryLimitInput: document.getElementById("memory-limit-input"),
+  memoryCount: document.getElementById("memory-count"),
   referencesList: document.getElementById("references-list"),
   imageForm: document.getElementById("image-form"),
   imageStage: document.getElementById("image-stage"),
@@ -569,6 +574,94 @@ function renderMemories(memories) {
     .join("");
 }
 
+function renderManagedMemories(memories) {
+  state.managedMemories = memories || [];
+  els.memoryCount.textContent = `${state.managedMemories.length} memories`;
+  if (!state.managedMemories.length) {
+    els.memoryManagementList.innerHTML = '<div class="placeholder">暂无可管理记忆。</div>';
+    return;
+  }
+
+  els.memoryManagementList.innerHTML = state.managedMemories
+    .map((memory) => {
+      const scope = memory.scope || (memory.session_id ? "session" : "user");
+      const tags = (memory.tags || []).map((tag) => `<span class="detail-chip">${escapeHtml(tag)}</span>`).join("");
+      const updatedAt = formatDateTime(memory.updated_at || memory.created_at);
+      const accessedAt = memory.last_accessed_at ? `last ${formatDateTime(memory.last_accessed_at)}` : "not accessed";
+      return `
+        <article class="memory-record">
+          <div>
+            <div class="memory-record-head">
+              <span class="memory-record-kind">${escapeHtml(memory.kind)}</span>
+              <span class="detail-chip">${escapeHtml(scope)}</span>
+              <span class="detail-chip">importance ${Number(memory.importance || 0).toFixed(2)}</span>
+              <span class="detail-chip">${escapeHtml(memory.session_id || "global")}</span>
+            </div>
+            <div class="memory-record-content">${escapeHtml(memory.content || "")}</div>
+            <div class="memory-record-tags">${tags || '<span class="placeholder">untagged</span>'}</div>
+            <div class="memory-record-meta">
+              <span>${escapeHtml(updatedAt)}</span>
+              <span>${escapeHtml(accessedAt)}</span>
+              <span>${escapeHtml(memory.id)}</span>
+            </div>
+          </div>
+          <button class="memory-delete" type="button" data-memory-delete-id="${escapeHtml(memory.id)}">删除</button>
+        </article>
+      `;
+    })
+    .join("");
+
+  els.memoryManagementList.querySelectorAll("[data-memory-delete-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      void handleDeleteMemory(node.dataset.memoryDeleteId);
+    });
+  });
+}
+
+function memoryQueryString() {
+  const params = new URLSearchParams();
+  const sessionId = String(els.memorySessionInput.value || "").trim();
+  const limit = Math.min(100, Math.max(1, Number(els.memoryLimitInput.value || 20)));
+  els.memoryLimitInput.value = String(limit);
+  params.set("limit", String(limit));
+  if (sessionId) {
+    params.set("session_id", sessionId);
+  }
+  return params.toString();
+}
+
+async function refreshManagedMemories() {
+  try {
+    els.memoryManagementList.innerHTML = '<div class="placeholder">正在加载记忆。</div>';
+    const memories = await api(`/api/memories?${memoryQueryString()}`);
+    renderManagedMemories(memories);
+  } catch (error) {
+    appendLogs("memory", error.message);
+    els.memoryManagementList.innerHTML = `<div class="placeholder">记忆加载失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function handleDeleteMemory(memoryId) {
+  if (!memoryId) {
+    return;
+  }
+  const memory = state.managedMemories.find((item) => item.id === memoryId);
+  const confirmed = window.confirm(`确定删除这条记忆吗？\n${memory?.content || memoryId}`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await api(`/api/memories/${memoryId}`, { method: "DELETE" });
+    appendLogs("memory", `已删除记忆 ${memoryId}`);
+    await refreshManagedMemories();
+    await refreshHealth();
+  } catch (error) {
+    appendLogs("memory", error.message);
+    window.alert(`删除记忆失败：${error.message}`);
+  }
+}
+
 function renderImageResult(result) {
   const imageSrc = result.image_b64 ? `data:image/png;base64,${result.image_b64}` : result.image_url;
   if (!imageSrc) {
@@ -767,6 +860,7 @@ async function handleQuery(event) {
   };
   state.lastQuery = query;
   state.lastSessionId = request.session_id || "web-session";
+  els.memorySessionInput.value = state.lastSessionId;
   state.lastReferences = [];
   state.queryRunId += 1;
   const runId = state.queryRunId;
@@ -826,6 +920,7 @@ async function handleQuery(event) {
       els.answerContent.textContent = "暂无答案。";
     }
     renderFeedbackBar(true);
+    await refreshManagedMemories();
   } catch (error) {
     if (error.name === "AbortError" || !isCurrentRun()) {
       return;
@@ -840,6 +935,7 @@ async function handleQuery(event) {
       renderMemories(result.memories || []);
       renderReferences(result.references || []);
       renderFeedbackBar(true);
+      await refreshManagedMemories();
       appendLogs("query", ["流式检索失败，已切换普通检索。", ...(result.logs || [])]);
     } catch (fallbackError) {
       appendLogs("query", [error.message, fallbackError.message]);
@@ -910,6 +1006,18 @@ function bindQuickActions() {
   });
 
   document.getElementById("refresh-documents").addEventListener("click", refreshDocuments);
+  document.getElementById("refresh-memories").addEventListener("click", () => {
+    void refreshManagedMemories();
+  });
+  els.memorySessionInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void refreshManagedMemories();
+    }
+  });
+  els.memoryLimitInput.addEventListener("change", () => {
+    void refreshManagedMemories();
+  });
   document.getElementById("use-sample-ingest").addEventListener("click", () => {
     els.sourceType.value = "markdown";
     updateSourceMode();
@@ -952,6 +1060,22 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return "unknown";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 async function boot() {
   els.ingestForm.addEventListener("submit", handleIngest);
   els.queryForm.addEventListener("submit", handleQuery);
@@ -963,6 +1087,7 @@ async function boot() {
   bindGlobalHotkeys();
   await refreshHealth();
   await refreshDocuments();
+  await refreshManagedMemories();
 }
 
 boot();

@@ -43,6 +43,10 @@
           <span>⌕</span>
           <strong>检索问答</strong>
         </button>
+        <button class="nav-item" type="button" data-scroll-target="memory-panel">
+          <span>◷</span>
+          <strong>记忆管理</strong>
+        </button>
       </nav>
 
       <section class="sidebar-section">
@@ -192,6 +196,32 @@
           </div>
           <div id="references-list" class="references-list">
             <div class="placeholder">暂无引用。</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="memory-panel" class="memory-workspace">
+        <article class="panel memory-panel">
+          <div class="panel-head">
+            <div>
+              <h2>记忆管理</h2>
+              <div class="panel-subtitle">查看当前会话和全局长期记忆，可删除过期或错误记忆。</div>
+            </div>
+            <span id="memory-count" class="small-meta">0 memories</span>
+          </div>
+          <div class="memory-toolbar">
+            <label>
+              <span>会话过滤</span>
+              <input type="text" id="memory-session-input" value="web-session" placeholder="留空查看全部记忆">
+            </label>
+            <label>
+              <span>数量</span>
+              <input type="number" id="memory-limit-input" min="1" max="100" value="20">
+            </label>
+            <button class="refresh-link" type="button" id="refresh-memories">刷新记忆</button>
+          </div>
+          <div id="memory-management-list" class="memory-management-list">
+            <div class="placeholder">正在加载记忆。</div>
           </div>
         </article>
       </section>

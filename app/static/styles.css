@@ -260,13 +260,15 @@ button {
 
 .primary-workspace,
 .content-workspace,
+.memory-workspace,
 .process-grid {
   max-width: 1180px;
   margin: 0 auto;
 }
 
 .primary-workspace,
-.content-workspace {
+.content-workspace,
+.memory-workspace {
   margin-bottom: 18px;
 }
 
@@ -327,6 +329,7 @@ button:focus {
 .panel-head,
 .content-toolbar,
 .query-controls,
+.memory-toolbar,
 .image-controls {
   display: flex;
   align-items: center;
@@ -452,6 +455,12 @@ button:focus {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+
+.panel-subtitle {
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
 }
 
 .pipeline-steps {
@@ -683,6 +692,73 @@ button:focus {
   color: var(--text);
 }
 
+.memory-toolbar {
+  align-items: flex-end;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.memory-toolbar label {
+  min-width: 180px;
+}
+
+.memory-management-list {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.memory-record {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-soft);
+}
+
+.memory-record-head,
+.memory-record-meta,
+.memory-record-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.memory-record-kind {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.memory-record-content {
+  margin-top: 8px;
+  color: var(--text-soft);
+}
+
+.memory-record-meta,
+.memory-record-tags {
+  margin-top: 8px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.memory-delete {
+  align-self: start;
+  padding: 7px 10px;
+  border: 1px solid rgba(180, 74, 74, 0.18);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--danger);
+}
+
+.memory-delete:hover {
+  background: #f4eaea;
+}
+
 .references-list,
 .related-list,
 .log-console {
@@ -830,9 +906,14 @@ button:focus {
   .panel-head,
   .content-toolbar,
   .query-controls,
+  .memory-toolbar,
   .image-controls {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .memory-record {
+    grid-template-columns: 1fr;
   }
 
   .content-summary {

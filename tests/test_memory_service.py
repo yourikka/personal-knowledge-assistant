@@ -101,6 +101,29 @@ def test_query_pipeline_writes_rule_based_memory(tmp_path):
     assert "中文简洁回答" in memories[0]["content"]
 
 
+def test_memory_records_can_be_listed_and_deleted(tmp_path):
+    _, repo, _, _ = build_memory_service(tmp_path)
+    repo.upsert_memory(
+        {
+            "id": "mem-delete",
+            "session_id": "web-session",
+            "scope": "session",
+            "kind": "fact",
+            "content": "这条记忆用于前端管理删除测试。",
+            "importance": 0.7,
+            "tags": ["管理"],
+            "metadata": {},
+        }
+    )
+
+    memories = repo.list_memories(session_id="web-session")
+
+    assert [memory["id"] for memory in memories] == ["mem-delete"]
+    assert repo.delete_memory("mem-delete") is True
+    assert repo.list_memories(session_id="web-session") == []
+    assert repo.delete_memory("mem-delete") is False
+
+
 def test_memory_service_supersedes_conflicting_memories(tmp_path):
     _, repo, _, service = build_memory_service(tmp_path)
 
