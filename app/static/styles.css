@@ -752,12 +752,32 @@ button:focus {
   font-size: 12px;
 }
 
-.memory-delete {
+.memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-self: start;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.memory-action {
   align-self: start;
   padding: 7px 10px;
-  border: 1px solid rgba(180, 74, 74, 0.18);
   border-radius: 999px;
   background: #fff;
+}
+
+.memory-edit {
+  border: 1px solid rgba(47, 143, 73, 0.22);
+  color: var(--accent);
+}
+
+.memory-edit:hover {
+  background: var(--accent-soft);
+}
+
+.memory-delete {
+  border: 1px solid rgba(180, 74, 74, 0.18);
   color: var(--danger);
 }
 

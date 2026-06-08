@@ -138,6 +138,12 @@ class MemoryResponse(BaseModel):
     updated_at: str
 
 
+class MemoryUpdateRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=500)
+    importance: float | None = Field(default=None, ge=0, le=1)
+    tags: list[str] | None = Field(default=None, max_length=5)
+
+
 class DeleteMemoryResponse(BaseModel):
     status: str
     memory_id: str

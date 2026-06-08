@@ -26,6 +26,7 @@ from .models import (
     IngestResponse,
     JobResponse,
     MemoryResponse,
+    MemoryUpdateRequest,
     DocumentClickRequest,
     PersonalizationEventResponse,
     QueryRequest,
@@ -233,6 +234,38 @@ def record_query_feedback(request: QueryFeedbackRequest) -> PersonalizationEvent
 def list_memories(session_id: str | None = None, limit: int = 20) -> list[MemoryResponse]:
     memories = repo.list_memories(session_id=session_id, limit=limit)
     return [MemoryResponse(**memory) for memory in memories]
+
+
+@app.patch("/api/memories/{memory_id}", response_model=MemoryResponse)
+def update_memory(memory_id: str, request: MemoryUpdateRequest) -> MemoryResponse:
+    content = None
+    if request.content is not None:
+        content = request.content.strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="记忆内容不能为空。")
+    tags = None
+    if request.tags is not None:
+        tags = [tag.strip() for tag in request.tags if tag.strip()][:5]
+    updated = repo.update_memory(
+        memory_id,
+        content=content,
+        importance=request.importance,
+        tags=tags,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="记忆不存在。")
+    vector_store.add_memory(
+        memory_id=updated["id"],
+        text=updated["content"],
+        metadata={
+            "session_id": updated.get("session_id") or "",
+            "kind": "memory",
+            "scope": updated.get("scope", "session"),
+            "memory_kind": updated["kind"],
+            "importance": float(updated.get("importance", 0.5)),
+        },
+    )
+    return MemoryResponse(**updated)
 
 
 @app.delete("/api/memories/{memory_id}", response_model=DeleteMemoryResponse)

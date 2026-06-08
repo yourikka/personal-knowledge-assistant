@@ -609,11 +609,20 @@ function renderManagedMemories(memories) {
               <span>${escapeHtml(memory.id)}</span>
             </div>
           </div>
-          <button class="memory-delete" type="button" data-memory-delete-id="${escapeHtml(memory.id)}">删除</button>
+          <div class="memory-actions">
+            <button class="memory-action memory-edit" type="button" data-memory-edit-id="${escapeHtml(memory.id)}">编辑</button>
+            <button class="memory-action memory-delete" type="button" data-memory-delete-id="${escapeHtml(memory.id)}">删除</button>
+          </div>
         </article>
       `;
     })
     .join("");
+
+  els.memoryManagementList.querySelectorAll("[data-memory-edit-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      void handleEditMemory(node.dataset.memoryEditId);
+    });
+  });
 
   els.memoryManagementList.querySelectorAll("[data-memory-delete-id]").forEach((node) => {
     node.addEventListener("click", () => {
@@ -642,6 +651,64 @@ async function refreshManagedMemories() {
   } catch (error) {
     appendLogs("memory", error.message);
     els.memoryManagementList.innerHTML = `<div class="placeholder">记忆加载失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function handleEditMemory(memoryId) {
+  if (!memoryId) {
+    return;
+  }
+  const memory = state.managedMemories.find((item) => item.id === memoryId);
+  if (!memory) {
+    return;
+  }
+
+  const content = window.prompt("编辑记忆内容", memory.content || "");
+  if (content === null) {
+    return;
+  }
+  const trimmedContent = content.trim();
+  if (!trimmedContent) {
+    window.alert("记忆内容不能为空。");
+    return;
+  }
+
+  const tagText = window.prompt("编辑标签，用逗号分隔", (memory.tags || []).join(", "));
+  if (tagText === null) {
+    return;
+  }
+  const importanceText = window.prompt("编辑重要性，范围 0 到 1", Number(memory.importance || 0).toFixed(2));
+  if (importanceText === null) {
+    return;
+  }
+  const importance = Number(importanceText);
+  if (!Number.isFinite(importance) || importance < 0 || importance > 1) {
+    window.alert("重要性必须是 0 到 1 之间的数字。");
+    return;
+  }
+
+  const tags = tagText
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  try {
+    await api(`/api/memories/${memoryId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: trimmedContent,
+        importance,
+        tags,
+      }),
+    });
+    appendLogs("memory", `已更新记忆 ${memoryId}`);
+    await refreshManagedMemories();
+    await refreshHealth();
+  } catch (error) {
+    appendLogs("memory", error.message);
+    window.alert(`更新记忆失败：${error.message}`);
   }
 }
 

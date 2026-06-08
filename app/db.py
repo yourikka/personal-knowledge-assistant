@@ -668,6 +668,39 @@ class KnowledgeRepository:
             row = conn.execute("SELECT * FROM memory_records WHERE id = ?", (memory_id,)).fetchone()
         return self._row_to_memory(row) if row else None
 
+    def update_memory(
+        self,
+        memory_id: str,
+        *,
+        content: str | None = None,
+        importance: float | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        existing = self.get_memory(memory_id)
+        if not existing:
+            return None
+
+        next_content = content if content is not None else existing["content"]
+        next_importance = float(importance) if importance is not None else float(existing["importance"])
+        next_tags = tags if tags is not None else existing["tags"]
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_records
+                SET content = ?, importance = ?, tags_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    next_content,
+                    next_importance,
+                    json.dumps(next_tags, ensure_ascii=False),
+                    now,
+                    memory_id,
+                ),
+            )
+        return self.get_memory(memory_id)
+
     def list_memories(
         self,
         session_id: str | None = None,

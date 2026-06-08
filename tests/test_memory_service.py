@@ -124,6 +124,37 @@ def test_memory_records_can_be_listed_and_deleted(tmp_path):
     assert repo.delete_memory("mem-delete") is False
 
 
+def test_memory_records_can_be_updated(tmp_path):
+    _, repo, _, _ = build_memory_service(tmp_path)
+    repo.upsert_memory(
+        {
+            "id": "mem-edit",
+            "session_id": "web-session",
+            "scope": "session",
+            "kind": "preference",
+            "content": "用户希望回答非常详细。",
+            "importance": 0.4,
+            "tags": ["旧标签"],
+            "metadata": {},
+        }
+    )
+
+    updated = repo.update_memory(
+        "mem-edit",
+        content="用户希望回答简洁，并优先使用中文。",
+        importance=0.88,
+        tags=["中文", "简洁"],
+    )
+
+    assert updated is not None
+    assert updated["content"] == "用户希望回答简洁，并优先使用中文。"
+    assert updated["importance"] == 0.88
+    assert updated["tags"] == ["中文", "简洁"]
+    assert updated["kind"] == "preference"
+    assert updated["session_id"] == "web-session"
+    assert repo.update_memory("missing-memory", content="不存在") is None
+
+
 def test_memory_service_supersedes_conflicting_memories(tmp_path):
     _, repo, _, service = build_memory_service(tmp_path)
 
