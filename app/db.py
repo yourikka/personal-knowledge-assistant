@@ -866,6 +866,47 @@ class KnowledgeRepository:
             ).fetchall()
         return [self._row_to_job(row) for row in rows]
 
+    def list_jobs_by_status(self, statuses: list[str], limit: int = 1000) -> list[dict[str, Any]]:
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM jobs
+                WHERE status IN ({placeholders})
+                ORDER BY created_at ASC, updated_at ASC
+                LIMIT ?
+                """,
+                (*statuses, limit),
+            ).fetchall()
+        return [self._row_to_job(row) for row in rows]
+
+    def recover_running_jobs(self) -> list[str]:
+        now = utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id
+                FROM jobs
+                WHERE status = 'running'
+                ORDER BY updated_at ASC
+                """
+            ).fetchall()
+            job_ids = [row["id"] for row in rows]
+            if job_ids:
+                conn.executemany(
+                    """
+                    UPDATE jobs
+                    SET status = 'queued', error = NULL, updated_at = ?,
+                        started_at = NULL, finished_at = NULL
+                    WHERE id = ?
+                    """,
+                    [(now, job_id) for job_id in job_ids],
+                )
+        return job_ids
+
     def list_job_events(self, job_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute(

@@ -17,6 +17,7 @@ class JobService:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="knowledge-job")
         self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
+        self.recover_pending_jobs()
 
     def submit_ingest(self, request: IngestRequest, idempotency_key: str | None = None) -> dict[str, Any]:
         job = self.repo.create_job(
@@ -91,6 +92,16 @@ class JobService:
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=True)
+
+    def recover_pending_jobs(self) -> int:
+        recovered_running = self.repo.recover_running_jobs()
+        for job_id in recovered_running:
+            self.repo.add_job_event(job_id, "recovered", "服务重启后恢复运行中任务，已重新排队。")
+
+        jobs = self.repo.list_jobs_by_status(["queued"])
+        for job in jobs:
+            self._schedule(job["id"])
+        return len(jobs)
 
     def _schedule(self, job_id: str) -> None:
         with self._lock:

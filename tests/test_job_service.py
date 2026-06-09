@@ -137,3 +137,36 @@ def test_job_service_retries_failed_job(tmp_path):
         assert any(event["event_type"] == "queued" for event in retried["events"])
     finally:
         service.shutdown()
+
+
+def test_job_service_recovers_interrupted_running_jobs(tmp_path):
+    settings = Settings(
+        sqlite_path=str(tmp_path / "knowledge.db"),
+        chroma_dir=str(tmp_path / "chroma"),
+        enable_chroma=False,
+        openai_api_key="",
+    )
+    repo = KnowledgeRepository(settings.sqlite_path)
+    vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma, EmbeddingService(settings))
+    pipeline = KnowledgePipeline(settings, repo, vector_store)
+    job = repo.create_job(
+        job_id="job-interrupted",
+        job_type="ingest",
+        payload={
+            "source_type": "text",
+            "source": "服务重启恢复任务测试",
+            "title": "恢复任务",
+            "metadata": {},
+        },
+    )
+    assert repo.mark_job_running(job["id"])
+
+    service = JobService(repo, pipeline)
+    try:
+        finished = wait_for_terminal(service, job["id"])
+
+        assert finished["status"] == "succeeded"
+        assert finished["result"]["document_id"]
+        assert any(event["event_type"] == "recovered" for event in finished["events"])
+    finally:
+        service.shutdown()
