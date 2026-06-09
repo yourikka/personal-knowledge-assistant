@@ -13,12 +13,40 @@ from app.services.text_utils import extract_keywords
 
 class GraphExtractionService:
     ENTITY_PATTERNS = {
-        "person": re.compile(r"(?:作者|提出者|创始人|负责人|研究者|人物)[:：]\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._-]{1,32})"),
-        "organization": re.compile(r"(?:公司|组织|机构|团队|实验室)[:：]\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._-]{1,32})"),
-        "technology": re.compile(r"(?:技术|框架|模型|工具|算法|协议)[:：]\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._+-]{1,32})"),
-        "concept": re.compile(r"(?:概念|主题|关键词|方法)[:：]\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._-]{1,32})"),
+        "person": re.compile(r"(?:^|\n)(?:作者|提出者|创始人|负责人|研究者|人物)[:：][ \t]*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._-]{1,32})"),
+        "organization": re.compile(r"(?:^|\n)(?:公司|组织|机构|团队|实验室)[:：][ \t]*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._-]{1,32})"),
+        "technology": re.compile(r"(?:^|\n)(?:技术|框架|模型|工具|算法|协议)[:：][ \t]*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._+-]{1,32})"),
+        "concept": re.compile(r"(?:^|\n)(?:概念|主题|关键词|方法)[:：][ \t]*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff ._-]{1,32})"),
     }
     ASCII_TECH_PATTERN = re.compile(r"\b[A-Z][A-Za-z0-9]*(?:[-_./][A-Za-z0-9]+)*\b")
+    ENTITY_STOPWORDS = {
+        "agent",
+        "api",
+        "http",
+        "json",
+        "当前",
+        "内容",
+        "多个",
+        "可以",
+        "用于",
+        "使用",
+        "适合",
+        "构建",
+        "编排",
+        "流程",
+        "摘要",
+        "问答",
+        "模型",
+        "测试",
+        "文档",
+        "知识库",
+    }
+    TYPE_PRIORITY = {
+        "technology": 4,
+        "organization": 3,
+        "person": 2,
+        "concept": 1,
+    }
 
     def __init__(self, settings: Settings, repo: KnowledgeRepository) -> None:
         self.settings = settings
@@ -107,11 +135,13 @@ class GraphExtractionService:
 
     def _extract_entities(self, text: str, chunk_lookup: dict[str, str | None]) -> list[dict[str, Any]]:
         counts: Counter[tuple[str, str]] = Counter()
+        explicit_labels: set[tuple[str, str]] = set()
         for entity_type, pattern in self.ENTITY_PATTERNS.items():
             for match in pattern.finditer(text):
                 name = self._clean_name(match.group(1))
                 if self._valid_name(name):
-                    counts[(name, entity_type)] += 2
+                    counts[(name, entity_type)] += 3
+                    explicit_labels.add((name.lower(), entity_type))
 
         for tag in extract_keywords(text, limit=12):
             name = self._clean_name(tag)
@@ -123,8 +153,33 @@ class GraphExtractionService:
             if self._valid_name(name):
                 counts[(name, "technology")] += 1
 
+        best_by_name: dict[str, tuple[str, str, int]] = {}
+        for (name, entity_type), count in counts.items():
+            key = name.lower()
+            current = best_by_name.get(key)
+            if current is None:
+                best_by_name[key] = (name, entity_type, count)
+                continue
+            _, current_type, current_count = current
+            current_rank = (
+                int((key, current_type) in explicit_labels),
+                current_count,
+                self.TYPE_PRIORITY.get(current_type, 0),
+            )
+            candidate_rank = (
+                int((key, entity_type) in explicit_labels),
+                count,
+                self.TYPE_PRIORITY.get(entity_type, 0),
+            )
+            if candidate_rank > current_rank:
+                best_by_name[key] = (name, entity_type, count)
+
+        ranked = sorted(
+            best_by_name.values(),
+            key=lambda item: (-item[2], -self.TYPE_PRIORITY.get(item[1], 0), item[0]),
+        )
         entities = []
-        for (name, entity_type), count in counts.most_common(16):
+        for name, entity_type, count in ranked[:16]:
             entity_id = self._entity_id(name=name, entity_type=entity_type)
             entities.append(
                 {
@@ -192,10 +247,27 @@ class GraphExtractionService:
         return f"edge-{digest}"
 
     def _clean_name(self, value: str) -> str:
-        return re.sub(r"\s+", " ", value.strip(" \t\r\n，。；;：:（）()[]【】"))
+        candidate = re.split(r"[，。；;、,.!?！？\n\r\t]", value.strip(), maxsplit=1)[0]
+        candidate = re.sub(r"\s+", " ", candidate.strip(" \t\r\n，。；;：:（）()[]【】"))
+        return candidate
 
     def _valid_name(self, value: str) -> bool:
         if len(value) < self.settings.graph_min_entity_length or len(value) > 40:
+            return False
+        lower = value.lower()
+        if lower in self.ENTITY_STOPWORDS:
+            return False
+        if re.fullmatch(r"[a-z0-9_-]+", lower) and len(lower) < 4:
+            return False
+        if any(word in lower for word in ("可以", "用于", "适合", "不会", "当前")):
+            return False
+        if re.fullmatch(r"\d+", value):
+            return False
+        if len(re.findall(r"[\u4e00-\u9fff]", value)) > 8:
+            return False
+        if value.count(" ") > 2:
+            return False
+        if re.fullmatch(r"[\u4e00-\u9fff]+", value) and len(value) > 6:
             return False
         return any(ch.isalnum() or "\u4e00" <= ch <= "\u9fff" for ch in value)
 

@@ -66,3 +66,28 @@ def test_graph_retrieval_returns_entity_documents(tmp_path):
 
     assert [document["id"] for document in documents] == [result["document_id"]]
     assert documents[0]["graph_entity_name"] == "LangGraph"
+
+
+def test_graph_extraction_filters_low_quality_entities(tmp_path):
+    _, repo, pipeline = build_pipeline(tmp_path)
+
+    result = pipeline.ingest(
+        IngestRequest(
+            source_type="text",
+            source=(
+                "技术：LangGraph，可以编排多个 Agent，不应该把整句作为实体。\n"
+                "组织：OpenAI。\n"
+                "内容：当前 文档 测试 可以 用于 摘要 问答。\n"
+                "LangGraph 和 OpenAI 出现在高质量实体里。"
+            ),
+            title="实体过滤测试",
+        )
+    )
+
+    names = {entity["name"] for entity in repo.list_document_entities(result["document_id"])}
+
+    assert "LangGraph" in names
+    assert "OpenAI" in names
+    assert "可以编排多个 Agent" not in names
+    assert "当前" not in names
+    assert "文档" not in names
