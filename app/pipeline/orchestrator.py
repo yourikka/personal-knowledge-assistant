@@ -6,11 +6,10 @@ from app.models import IngestRequest, PipelineState
 from app.pipeline.agents.acquisition_agent import AcquisitionAgent
 from app.pipeline.agents.cleaning_agent import CleaningAgent
 from app.pipeline.agents.chunking_agent import ChunkingAgent
-from app.pipeline.agents.classification_agent import ClassificationAgent
 from app.pipeline.agents.linking_agent import LinkingAgent
+from app.pipeline.agents.metadata_agent import MetadataAgent
 from app.pipeline.agents.parser_agent import ParserAgent
 from app.pipeline.agents.query_agent import QueryAgent
-from app.pipeline.agents.summary_agent import SummaryAgent
 from app.pipeline.agents.image_generation_agent import ImageGenerationAgent
 from app.services.memory_service import MemoryService
 from app.services.openai_client import OpenAIService
@@ -44,8 +43,7 @@ class KnowledgePipeline:
         self.self_check = SelfCheckService(settings)
         self.personalization_service = PersonalizationService(settings, repo)
         self.query_cache = QueryCacheService(settings)
-        self.classification = ClassificationAgent(self.openai_service, self.self_check)
-        self.summary = SummaryAgent(self.openai_service, self.self_check)
+        self.metadata = MetadataAgent(self.openai_service, self.self_check)
         self.graph_service = GraphExtractionService(settings, repo)
         self.rag_service = RAGService(
             settings,
@@ -258,8 +256,7 @@ class KnowledgePipeline:
         graph.add_node("agent_parser", self.parser.run)
         graph.add_node("agent_cleaning", self.cleaning.run)
         graph.add_node("agent_chunking", self.chunking.run)
-        graph.add_node("agent_classification", self.classification.run)
-        graph.add_node("agent_summary", self.summary.run)
+        graph.add_node("agent_metadata", self.metadata.run)
         graph.add_node("persist", self._persist_document)
         graph.add_node("agent_graph", self._extract_graph)
         graph.add_node("agent_linking", self.linking.run)
@@ -275,9 +272,8 @@ class KnowledgePipeline:
         )
         graph.add_edge("agent_parser", "agent_cleaning")
         graph.add_edge("agent_cleaning", "agent_chunking")
-        graph.add_edge("agent_chunking", "agent_classification")
-        graph.add_edge("agent_classification", "agent_summary")
-        graph.add_edge("agent_summary", "persist")
+        graph.add_edge("agent_chunking", "agent_metadata")
+        graph.add_edge("agent_metadata", "persist")
         graph.add_edge("persist", "agent_graph")
         graph.add_edge("agent_graph", "agent_linking")
         graph.add_edge("agent_linking", END)
