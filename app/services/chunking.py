@@ -45,6 +45,7 @@ class DocumentChunker:
                     "char_end": end,
                     "metadata": {
                         "heading_path": heading_path,
+                        "heading": heading_path[-1] if heading_path else "全文",
                         "char_count": len(chunk_text),
                         "token_count": len(tokenize(chunk_text)),
                     },
@@ -249,7 +250,7 @@ class DocumentChunker:
             heading_changed = current and unit.get("heading_path") != current[-1].get("heading_path")
             should_flush = current and current_len >= self.min_chars and current_len + unit_len > self.target_chars
             should_flush = should_flush or (current and current_len + unit_len > self.max_chars)
-            should_flush = should_flush or (heading_changed and current_len >= self.min_chars)
+            should_flush = should_flush or bool(heading_changed)
             if should_flush:
                 ranges.append(self._range_from_units(current))
                 current = self._overlap_tail(current)
@@ -266,8 +267,13 @@ class DocumentChunker:
 
         if current:
             if ranges and current_len < self.min_chars:
-                previous_start, _, previous_heading = ranges.pop()
-                ranges.append((previous_start, current[-1]["end"], current[-1].get("heading_path") or previous_heading))
+                previous_start, _, previous_heading = ranges[-1]
+                current_heading = current[-1].get("heading_path") or previous_heading
+                if current_heading == previous_heading:
+                    ranges.pop()
+                    ranges.append((previous_start, current[-1]["end"], current_heading))
+                else:
+                    ranges.append(self._range_from_units(current))
             else:
                 ranges.append(self._range_from_units(current))
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.models import PipelineState
 from app.services.openai_client import OpenAIService
 from app.services.self_check_service import SelfCheckService
-from app.services.text_utils import classify_text, extract_keywords, summarize_text
+from app.services.text_utils import STOPWORDS, classify_text, extract_keywords, normalize_whitespace, summarize_text
 
 
 class MetadataAgent:
@@ -13,8 +13,8 @@ class MetadataAgent:
 
     def run(self, state: PipelineState, use_model: bool = True) -> PipelineState:
         category, confidence = classify_text(state.cleaned_text)
-        tags = extract_keywords(state.cleaned_text, limit=5)
-        summary = summarize_text(state.cleaned_text, min_chars=100, max_chars=200)
+        tags = self._local_tags(state)
+        summary = self._local_summary(state.cleaned_text)
         source = "本地规则回退"
 
         if use_model and self.openai_service.enabled():
@@ -51,7 +51,7 @@ class MetadataAgent:
                 state.logs.append("metadata: 模型未返回可用 JSON，已使用本地规则。")
 
         if not summary:
-            summary = state.cleaned_text[:180]
+            summary = normalize_whitespace(state.cleaned_text)[:180]
         confidence = max(confidence, 0.7 if tags else confidence)
         if self.self_check:
             category, confidence, tags, class_logs = self.self_check.check_classification(
@@ -80,3 +80,42 @@ class MetadataAgent:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    def _local_tags(self, state: PipelineState) -> list[str]:
+        candidates = [
+            *extract_keywords(f"{state.title}\n{state.cleaned_text}", limit=12),
+            *extract_keywords(state.cleaned_text, limit=12),
+        ]
+        tags: list[str] = []
+        seen: set[str] = set()
+        for item in candidates:
+            tag = self._normalize_tag(item)
+            key = tag.lower()
+            if not tag or key in seen:
+                continue
+            seen.add(key)
+            tags.append(tag)
+            if len(tags) >= 5:
+                break
+        return tags
+
+    def _normalize_tag(self, value: str) -> str:
+        tag = normalize_whitespace(value).strip(" ，。；;：:（）()[]【】#")
+        if not tag:
+            return ""
+        lowered = tag.lower()
+        if lowered in STOPWORDS:
+            return ""
+        if len(tag) < 2 or len(tag) > 18:
+            return ""
+        if tag.isascii() and len(tag) < 4:
+            return ""
+        if any(fragment in tag for fragment in ("可以", "如果", "这个", "那个")):
+            return ""
+        return tag
+
+    def _local_summary(self, text: str) -> str:
+        summary = summarize_text(text, min_chars=100, max_chars=200)
+        if summary:
+            return summary
+        return normalize_whitespace(text)[:180]

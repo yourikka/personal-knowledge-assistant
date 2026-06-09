@@ -39,6 +39,17 @@ def test_chunker_builds_sections_from_heading_paths():
     assert all(section["char_start"] <= section["char_end"] for section in sections)
 
 
+def test_chunker_does_not_merge_short_tail_across_headings():
+    chunker = DocumentChunker(target_chars=120, overlap_chars=0, min_chars=80, max_chars=180)
+    text = "# 第一节\n\n这一节内容较长，用于形成一个独立 chunk，并且不应该吞掉后面标题。\n\n## 短尾节\n\n短内容。"
+
+    chunks = chunker.chunk("doc-1", text)
+
+    assert len(chunks) >= 2
+    assert chunks[-1]["metadata"]["heading"] == "短尾节"
+    assert "第一节" not in chunks[-1]["text"]
+
+
 def test_rag_can_retrieve_chunk_from_section_hit(tmp_path):
     repo, vector_store, rag_service = build_rag(tmp_path)
     repo.upsert_document(

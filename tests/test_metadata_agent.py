@@ -83,3 +83,25 @@ def test_metadata_agent_local_mode_skips_model_call():
     assert state.tags
     assert state.summary
     assert any("使用本地规则回退" in log for log in state.logs)
+
+
+def test_metadata_agent_local_tags_filter_fragments_and_use_title():
+    text = (
+        "技术：LangGraph。"
+        "LangGraph 用于构建 Agent 工作流。"
+        "短碎片 la an ng 不应成为标签。"
+        "RAG 检索和 Chroma 向量索引用于提升知识库问答质量。"
+    )
+    state = PipelineState(
+        request=IngestRequest(source_type="text", source=text, title="LangGraph RAG 知识库"),
+        cleaned_text=text,
+        title="LangGraph RAG 知识库",
+    )
+    agent = MetadataAgent(FakeOpenAIService(error=RuntimeError("should not call provider")))
+
+    result = agent.run(state, use_model=False)
+
+    assert "langgraph" in [tag.lower() for tag in result.tags]
+    assert all(tag.lower() not in {"la", "an", "ng"} for tag in result.tags)
+    assert all(len(tag) >= 2 for tag in result.tags)
+    assert result.summary
