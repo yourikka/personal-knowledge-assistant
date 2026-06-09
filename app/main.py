@@ -91,7 +91,10 @@ def health() -> HealthResponse:
 @app.post("/api/knowledge/ingest", response_model=IngestResponse)
 def ingest_document(request: IngestRequest) -> IngestResponse:
     try:
-        result = pipeline.ingest(request)
+        result = pipeline.ingest_fast(request)
+        if not result["duplicate"]:
+            job_service.submit_enrich(result["document_id"], idempotency_key=f"enrich-{result['document_id']}")
+            result["logs"].append("jobs: 已提交后台文档增强任务。")
         return IngestResponse(**result)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

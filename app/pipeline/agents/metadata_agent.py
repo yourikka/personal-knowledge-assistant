@@ -11,13 +11,13 @@ class MetadataAgent:
         self.openai_service = openai_service
         self.self_check = self_check
 
-    def run(self, state: PipelineState) -> PipelineState:
+    def run(self, state: PipelineState, use_model: bool = True) -> PipelineState:
         category, confidence = classify_text(state.cleaned_text)
         tags = extract_keywords(state.cleaned_text, limit=5)
         summary = summarize_text(state.cleaned_text, min_chars=100, max_chars=200)
         source = "本地规则回退"
 
-        if self.openai_service.enabled():
+        if use_model and self.openai_service.enabled():
             try:
                 result = self.openai_service.generate_json(
                     system_prompt=(
@@ -71,6 +71,9 @@ class MetadataAgent:
         state.logs.append(f"summary: 已完成摘要提取。 使用{source}。")
         state.logs.append(f"metadata: 已完成分类、标签和摘要生成。 使用{source}。")
         return state
+
+    def run_local(self, state: PipelineState) -> PipelineState:
+        return self.run(state, use_model=False)
 
     def _float_or_default(self, value: object, default: float) -> float:
         try:

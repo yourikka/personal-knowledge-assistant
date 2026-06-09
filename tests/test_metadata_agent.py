@@ -70,3 +70,16 @@ def test_metadata_agent_falls_back_when_model_fails():
     assert state.summary
     assert any("模型生成失败" in log and "provider timeout" in log for log in state.logs)
     assert any("使用本地规则回退" in log for log in state.logs)
+
+
+def test_metadata_agent_local_mode_skips_model_call():
+    openai = FakeOpenAIService(error=RuntimeError("should not call provider"))
+    agent = MetadataAgent(openai, SelfCheckService(Settings(openai_api_key="")))
+
+    state = agent.run(build_state(), use_model=False)
+
+    assert openai.calls == 0
+    assert state.category
+    assert state.tags
+    assert state.summary
+    assert any("使用本地规则回退" in log for log in state.logs)

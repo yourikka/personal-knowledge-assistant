@@ -519,6 +519,8 @@ agent_acquisition
 ### 8.2 入库接口要求
 
 - 请求必须包含 `source_type` 与 `source`
+- 同步入库应优先快速返回，先完成解析、清洗、切块、本地元数据和 SQLite 持久化
+- 模型元数据、向量索引、实体关系图谱和相似文档关联可通过后台增强任务补齐
 - 成功后返回：
   - `document_id`
   - `duplicate`

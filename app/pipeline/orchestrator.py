@@ -68,6 +68,7 @@ class KnowledgePipeline:
         )
         self.image_generation_agent = ImageGenerationAgent(settings, self.openai_service)
         self.ingest_graph = self._build_ingest_graph()
+        self.fast_ingest_graph = self._build_fast_ingest_graph()
         self.bootstrap()
 
     def bootstrap(self) -> None:
@@ -142,6 +143,33 @@ class KnowledgePipeline:
             "logs": state.logs + ["orchestrator: LangGraph 入库图执行完成。"],
         }
 
+    def ingest_fast(self, request: IngestRequest) -> dict:
+        state = self._coerce_state(self.fast_ingest_graph.invoke(PipelineState(request=request)))
+        if state.duplicate_of:
+            document = self.repo.get_document(state.duplicate_of)
+            return {
+                "document_id": document["id"],
+                "duplicate": True,
+                "title": document["title"],
+                "category": document["category"],
+                "tags": document["tags"],
+                "summary": document["summary"],
+                "related": self.repo.list_links(document["id"]),
+                "graph": self._document_graph_response(document),
+                "logs": state.logs + ["orchestrator: 命中去重，直接返回已有文档。"],
+            }
+        return {
+            "document_id": state.document_id,
+            "duplicate": False,
+            "title": state.title,
+            "category": state.category,
+            "tags": state.tags,
+            "summary": state.summary,
+            "related": [],
+            "graph": {"nodes": [], "edges": []},
+            "logs": state.logs + ["orchestrator: 快速入库已完成，文档增强将在后台补齐。"],
+        }
+
     def query(self, query: str, top_k: int, session_id: str | None = None) -> dict:
         return self.query_agent.run(query=query, top_k=top_k, session_id=session_id)
 
@@ -172,6 +200,33 @@ class KnowledgePipeline:
         document = self.repo.get_document(document_id)
         if not document:
             raise ValueError("文档不存在。")
+        metadata_state = PipelineState(
+            request=IngestRequest(
+                source_type=document["source_type"],
+                source=document["source_uri"],
+                title=document["title"],
+                metadata=document.get("metadata", {}),
+            ),
+            document_id=document_id,
+            source_uri=document["source_uri"],
+            parsed_text=document["raw_text"],
+            cleaned_text=document["cleaned_text"],
+            title=document["title"],
+        )
+        metadata_state = self.metadata.run(metadata_state, use_model=True)
+        if (
+            metadata_state.category != document["category"]
+            or metadata_state.tags != document["tags"]
+            or metadata_state.summary != document["summary"]
+        ):
+            document = {
+                **document,
+                "category": metadata_state.category,
+                "confidence": metadata_state.confidence,
+                "tags": metadata_state.tags,
+                "summary": metadata_state.summary,
+            }
+            self.repo.upsert_document(document)
         chunks = self.repo.list_document_chunks(document_id)
         sections = self.repo.list_document_sections(document_id)
         if not chunks:
@@ -292,6 +347,31 @@ class KnowledgePipeline:
         graph.add_edge("persist", "agent_graph")
         graph.add_edge("agent_graph", "agent_linking")
         graph.add_edge("agent_linking", END)
+        return graph.compile()
+
+    def _build_fast_ingest_graph(self):
+        graph = StateGraph(PipelineState)
+        graph.add_node("agent_acquisition", self.acquisition.run)
+        graph.add_node("agent_parser", self.parser.run)
+        graph.add_node("agent_cleaning", self.cleaning.run)
+        graph.add_node("agent_chunking", self.chunking.run)
+        graph.add_node("agent_metadata", self.metadata.run_local)
+        graph.add_node("persist", self._persist_document)
+
+        graph.set_entry_point("agent_acquisition")
+        graph.add_conditional_edges(
+            "agent_acquisition",
+            self._route_after_acquisition,
+            {
+                "duplicate": END,
+                "parse": "agent_parser",
+            },
+        )
+        graph.add_edge("agent_parser", "agent_cleaning")
+        graph.add_edge("agent_cleaning", "agent_chunking")
+        graph.add_edge("agent_chunking", "agent_metadata")
+        graph.add_edge("agent_metadata", "persist")
+        graph.add_edge("persist", END)
         return graph.compile()
 
     def _route_after_acquisition(self, state: PipelineState) -> str:

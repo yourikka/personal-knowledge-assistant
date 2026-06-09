@@ -115,3 +115,20 @@ def test_enrich_document_rebuilds_graph_and_links(tmp_path):
     assert result["graph_nodes"] > 0
     assert repo.list_document_entities(first["document_id"])
     assert repo.list_links(first["document_id"])
+
+
+def test_fast_ingest_persists_metadata_without_graph_or_links(tmp_path):
+    repo, _, pipeline = build_pipeline(tmp_path)
+
+    result = pipeline.ingest_fast(
+        IngestRequest(source_type="text", source="技术：LangGraph\nLangGraph 快速入库。", title="Fast Ingest")
+    )
+
+    assert result["duplicate"] is False
+    assert result["document_id"]
+    assert result["related"] == []
+    assert result["graph"] == {"nodes": [], "edges": []}
+    assert repo.get_document(result["document_id"])
+    assert repo.list_document_chunks(result["document_id"])
+    assert repo.list_links(result["document_id"]) == []
+    assert any("快速入库已完成" in log for log in result["logs"])
