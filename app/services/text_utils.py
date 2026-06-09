@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import math
 import re
 from collections import Counter
@@ -45,10 +46,57 @@ AD_PATTERNS = [
     r"广告",
     r"扫码",
     r"关注公众号",
+    r"更多精彩",
     r"免责声明",
+    r"优惠券",
     r"点击下载",
+    r"点击这里",
     r"转载注明",
+    r"广告位招租",
 ]
+
+HTML_BLOCK_RE = re.compile(r"<(script|style|noscript)[^>]*>[\s\S]*?</\1>", re.IGNORECASE)
+HTML_TAG_RE = re.compile(r"<[^>\n]+>")
+MOJIBAKE_REPLACEMENTS = {
+    "â€™": "'",
+    "â€˜": "'",
+    "â€œ": '"',
+    "â€\x9d": '"',
+    "â€": '"',
+    "â€“": "-",
+    "â€”": "-",
+    "Â": "",
+}
+CP1252_REVERSE = {
+    "€": 0x80,
+    "‚": 0x82,
+    "ƒ": 0x83,
+    "„": 0x84,
+    "…": 0x85,
+    "†": 0x86,
+    "‡": 0x87,
+    "ˆ": 0x88,
+    "‰": 0x89,
+    "Š": 0x8A,
+    "‹": 0x8B,
+    "Œ": 0x8C,
+    "Ž": 0x8E,
+    "‘": 0x91,
+    "’": 0x92,
+    "“": 0x93,
+    "”": 0x94,
+    "•": 0x95,
+    "–": 0x96,
+    "—": 0x97,
+    "˜": 0x98,
+    "™": 0x99,
+    "š": 0x9A,
+    "›": 0x9B,
+    "œ": 0x9C,
+    "ž": 0x9E,
+    "Ÿ": 0x9F,
+}
+MOJIBAKE_SPAN_RE = re.compile(r"[\u00a0-\u00ff€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ\x80-\x9f]{2,}")
 
 
 def normalize_whitespace(text: str) -> str:
@@ -65,18 +113,98 @@ def normalize_document_text(text: str) -> str:
 
 def fix_mojibake(text: str) -> str:
     repaired = text.replace("\u00a0", " ").replace("\ufeff", "")
-    repaired = repaired.replace("â€”", "-").replace("â€œ", '"').replace("â€\x9d", '"')
+    for bad, good in MOJIBAKE_REPLACEMENTS.items():
+        repaired = repaired.replace(bad, good)
+    repaired = _repair_utf8_mojibake(repaired)
     return repaired
 
 
+def strip_html(text: str) -> str:
+    cleaned = html.unescape(text)
+    cleaned = HTML_BLOCK_RE.sub("\n", cleaned)
+    cleaned = HTML_TAG_RE.sub(" ", cleaned)
+    return cleaned.replace("\u00a0", " ")
+
+
 def remove_noise(text: str) -> str:
-    cleaned = text
+    cleaned = strip_html(text)
+    lines = []
+    for line in cleaned.splitlines():
+        normalized_line = normalize_whitespace(line)
+        if not normalized_line:
+            lines.append("")
+            continue
+        if _is_noise_line(normalized_line):
+            continue
+        lines.append(line)
+    cleaned = "\n".join(lines)
     for pattern in AD_PATTERNS:
         cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"https?://\S+", " ", cleaned)
     cleaned = re.sub(r"(?i)(cookie|subscribe|newsletter|sign up|all rights reserved)", " ", cleaned)
     cleaned = re.sub(r"(上一篇|下一篇|相关阅读|推荐阅读)", " ", cleaned)
+    cleaned = _normalize_punctuation(cleaned)
     return normalize_document_text(cleaned)
+
+
+def _repair_utf8_mojibake(text: str) -> str:
+    try:
+        candidate = text.encode("cp1252", errors="ignore").decode("utf-8", errors="ignore")
+    except UnicodeError:
+        return text
+    if not candidate.strip():
+        return text
+    if _text_quality(candidate) > _text_quality(text) + 0.08:
+        return candidate
+    return MOJIBAKE_SPAN_RE.sub(_repair_mojibake_span, text)
+
+
+def _repair_mojibake_span(match: re.Match[str]) -> str:
+    span = match.group(0)
+    raw = bytearray()
+    for char in span:
+        if char in CP1252_REVERSE:
+            raw.append(CP1252_REVERSE[char])
+        elif ord(char) <= 255:
+            raw.append(ord(char))
+        else:
+            return span
+    try:
+        candidate = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return span
+    if _text_quality(candidate) > _text_quality(span) + 0.08:
+        return candidate
+    return span
+
+
+def _text_quality(text: str) -> float:
+    useful = sum(1 for char in text if "\u4e00" <= char <= "\u9fff" or char.isascii())
+    suspicious = sum(1 for char in text if char in {"�", "Â", "Ã", "¢", "€", "œ", "˜", "™"})
+    return (useful - suspicious * 3) / max(len(text), 1)
+
+
+def _is_noise_line(line: str) -> bool:
+    lowered = line.lower()
+    if re.search(r"(?i)(cookie|subscribe|newsletter|all rights reserved)", lowered):
+        return True
+    matches = sum(1 for pattern in AD_PATTERNS if re.search(pattern, line, flags=re.IGNORECASE))
+    if matches >= 1 and len(line) <= 80:
+        return True
+    if re.fullmatch(r"(上一篇|下一篇|相关阅读|推荐阅读|赞|收藏|分享)[\s\S]{0,20}", line):
+        return True
+    return False
+
+
+def _normalize_punctuation(text: str) -> str:
+    text = re.sub(r"，{2,}", "，", text)
+    text = re.sub(r"。{2,}", "。", text)
+    text = re.sub(r"！{2,}", "！", text)
+    text = re.sub(r"？{2,}", "？", text)
+    text = re.sub(r"!{2,}", "!", text)
+    text = re.sub(r"\?{2,}", "?", text)
+    text = re.sub(r";{2,}", ";", text)
+    return text
 
 
 def text_stats(text: str) -> dict[str, int]:
