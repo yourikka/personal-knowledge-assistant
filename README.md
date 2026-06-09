@@ -348,6 +348,7 @@ agent_acquisition
 - OCR、Playwright、Chroma 都是可选能力，不会阻塞基础功能启动
 - 支持 `python scripts/smoke_test.py` 做基础回归测试
 - 支持 `python scripts/eval_rag.py` 做离线 RAG 质量评测
+- 支持 `python scripts/benchmark_pipeline.py --iterations 3` 输出本地入库、增强和 RAG 查询耗时基线
 
 ## OpenAI 配置
 
@@ -406,6 +407,7 @@ CHUNK_MAX_CHARS=1400
 - 生图通常比文本慢得多，所以单独提供了 `OPENAI_IMAGE_TIMEOUT_SECONDS`
 - 如果没配 `EMBEDDING_PROVIDER=zhipu` 或没配 `EMBEDDING_API_KEY`，系统会回退到本地 hash embedding
 - 记忆系统默认开启；如需关闭，可设置 `MEMORY_ENABLED=false`
+- Chroma 持久化向量库可选开启，代码会显式关闭 Chroma anonymized telemetry；如需完全无 Chroma 依赖，可保持 `ENABLE_CHROMA=false`
 - 如果第三方平台路径不是标准 OpenAI 路径，可以改：
   - `OPENAI_CHAT_COMPLETIONS_PATH`
   - `OPENAI_IMAGE_GENERATIONS_PATH`

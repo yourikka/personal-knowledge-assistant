@@ -8,9 +8,11 @@ from .text_utils import cosine_similarity, overlap_score
 
 try:
     import chromadb
+    from chromadb.config import Settings as ChromaSettings
     from chromadb.errors import InvalidDimensionException
 except ImportError:
     chromadb = None
+    ChromaSettings = None
     InvalidDimensionException = None
 
 
@@ -28,7 +30,10 @@ class VectorStore:
 
         if self.enable_chroma:
             os.makedirs(chroma_dir, exist_ok=True)
-            self.client = chromadb.PersistentClient(path=chroma_dir)
+            self.client = chromadb.PersistentClient(
+                path=chroma_dir,
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
             self.collection = self.client.get_or_create_collection(name=self.collection_name)
             self._ensure_collection_dimension()
 

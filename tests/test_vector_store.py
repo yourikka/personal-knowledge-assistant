@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import chromadb
+from chromadb.config import Settings as ChromaSettings
 
 from app.config import Settings
 from app.services.embedding_service import EmbeddingService
+import app.services.vector_store as vector_store_module
 from app.services.vector_store import VectorStore
 
 
@@ -18,7 +20,10 @@ class CountingEmbeddingService:
 
 def test_vector_store_recovers_from_persisted_chroma_dimension_mismatch(tmp_path):
     chroma_dir = tmp_path / "chroma"
-    client = chromadb.PersistentClient(path=str(chroma_dir))
+    client = chromadb.PersistentClient(
+        path=str(chroma_dir),
+        settings=ChromaSettings(anonymized_telemetry=False),
+    )
     legacy = client.get_or_create_collection(name="knowledge_documents")
     legacy.upsert(
         ids=["legacy-doc"],
@@ -80,3 +85,32 @@ def test_vector_store_batches_collection_upserts(tmp_path):
     assert len(collection.calls) == 1
     assert collection.calls[0]["ids"] == ["doc-1", "doc-2"]
     assert set(vector_store.local_embeddings) == {"doc-1", "doc-2"}
+
+
+def test_vector_store_disables_chroma_telemetry(tmp_path, monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, path, settings):
+            captured["path"] = path
+            captured["settings"] = settings
+
+        def get_or_create_collection(self, name):
+            captured["collection_name"] = name
+            return FakeCollection()
+
+    class FakeCollection:
+        _model = None
+
+    class FakeChroma:
+        PersistentClient = FakeClient
+
+    settings = Settings(chroma_dir=str(tmp_path / "chroma"), enable_chroma=True)
+    monkeypatch.setattr(vector_store_module, "chromadb", FakeChroma)
+
+    vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma, CountingEmbeddingService())
+
+    assert vector_store.enable_chroma is True
+    assert captured["path"] == settings.chroma_dir
+    assert captured["collection_name"] == "knowledge_documents"
+    assert captured["settings"].anonymized_telemetry is False
