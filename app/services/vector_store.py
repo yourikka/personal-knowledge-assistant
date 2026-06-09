@@ -33,17 +33,27 @@ class VectorStore:
             self._ensure_collection_dimension()
 
     def add_text(self, item_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
-        embedding = self._embed_text(text)
-        self.local_embeddings[item_id] = embedding
-        self.local_texts[item_id] = text
-        self.local_metadata[item_id] = metadata or {}
+        self.add_texts([(item_id, text, metadata or {})])
+
+    def add_texts(self, items: list[tuple[str, str, dict[str, Any] | None]]) -> None:
+        if not items:
+            return
+        ids = [item_id for item_id, _, _ in items]
+        documents = [text for _, text, _ in items]
+        metadatas = [metadata or {} for _, _, metadata in items]
+        embeddings = [self._embed_text(text) for text in documents]
+
+        for item_id, text, metadata, embedding in zip(ids, documents, metadatas, embeddings):
+            self.local_embeddings[item_id] = embedding
+            self.local_texts[item_id] = text
+            self.local_metadata[item_id] = metadata
 
         if self.collection is not None:
             self._upsert_collection(
-                ids=[item_id],
-                documents=[text],
-                metadatas=[metadata or {}],
-                embeddings=[embedding],
+                ids=ids,
+                documents=documents,
+                metadatas=metadatas,
+                embeddings=embeddings,
             )
 
     def add_document(self, document_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
@@ -54,9 +64,25 @@ class VectorStore:
         payload = {"kind": "chunk", **(metadata or {})}
         self.add_text(chunk_id, text, payload)
 
+    def add_chunks(self, chunks: list[dict[str, Any]], metadata_factory) -> None:
+        self.add_texts(
+            [
+                (chunk["id"], chunk["text"], {"kind": "chunk", **metadata_factory(chunk)})
+                for chunk in chunks
+            ]
+        )
+
     def add_section(self, section_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
         payload = {"kind": "section", **(metadata or {})}
         self.add_text(section_id, text, payload)
+
+    def add_sections(self, sections: list[dict[str, Any]], metadata_factory) -> None:
+        self.add_texts(
+            [
+                (section["id"], section["text"], {"kind": "section", **metadata_factory(section)})
+                for section in sections
+            ]
+        )
 
     def add_memory(self, memory_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
         payload = {"kind": "memory", **(metadata or {})}

@@ -26,29 +26,25 @@ class LinkingAgent:
             text=state.cleaned_text,
             metadata={"title": state.title, "category": state.category},
         )
-        for section in state.sections:
-            self.vector_store.add_section(
-                section_id=section["id"],
-                text=section["text"],
-                metadata={
+        self.vector_store.add_sections(
+            state.sections,
+            lambda section: {
                     "document_id": state.document_id,
                     "section_index": section["section_index"],
                     "heading": section["heading"],
                     "title": state.title,
                     "category": state.category,
                 },
-            )
-        for chunk in state.chunks:
-            self.vector_store.add_chunk(
-                chunk_id=chunk["id"],
-                text=chunk["text"],
-                metadata={
+        )
+        self.vector_store.add_chunks(
+            state.chunks,
+            lambda chunk: {
                     "document_id": state.document_id,
                     "chunk_index": chunk["chunk_index"],
                     "title": state.title,
                     "category": state.category,
                 },
-            )
+        )
 
         if self.rag_service:
             retrieval = self.rag_service.retrieve(

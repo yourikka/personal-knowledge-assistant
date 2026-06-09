@@ -55,3 +55,28 @@ def test_vector_store_reuses_text_embeddings(tmp_path):
     vector_store.similarity("LangGraph", "LangGraph")
 
     assert embedding_service.calls == ["LangGraph"]
+
+
+def test_vector_store_batches_collection_upserts(tmp_path):
+    class FakeCollection:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def upsert(self, ids, documents, metadatas, embeddings):
+            self.calls.append({"ids": ids, "documents": documents, "metadatas": metadatas, "embeddings": embeddings})
+
+    settings = Settings(chroma_dir=str(tmp_path / "chroma"), enable_chroma=False)
+    vector_store = VectorStore(settings.chroma_dir, settings.enable_chroma, CountingEmbeddingService())
+    collection = FakeCollection()
+    vector_store.collection = collection
+
+    vector_store.add_texts(
+        [
+            ("doc-1", "LangGraph 文档", {"kind": "document"}),
+            ("doc-2", "Chroma 文档", {"kind": "document"}),
+        ]
+    )
+
+    assert len(collection.calls) == 1
+    assert collection.calls[0]["ids"] == ["doc-1", "doc-2"]
+    assert set(vector_store.local_embeddings) == {"doc-1", "doc-2"}

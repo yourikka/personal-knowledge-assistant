@@ -90,29 +90,25 @@ class KnowledgePipeline:
                 text=document["cleaned_text"],
                 metadata={"title": document["title"], "category": document["category"]},
             )
-            for section in sections:
-                self.vector_store.add_section(
-                    section_id=section["id"],
-                    text=section["text"],
-                    metadata={
+            self.vector_store.add_sections(
+                sections,
+                lambda section, document=document: {
                         "document_id": document["id"],
                         "section_index": section["section_index"],
                         "heading": section["heading"],
                         "title": document["title"],
                         "category": document["category"],
                     },
-                )
-            for chunk in chunks:
-                self.vector_store.add_chunk(
-                    chunk_id=chunk["id"],
-                    text=chunk["text"],
-                    metadata={
+            )
+            self.vector_store.add_chunks(
+                chunks,
+                lambda chunk, document=document: {
                         "document_id": document["id"],
                         "chunk_index": chunk["chunk_index"],
                         "title": document["title"],
                         "category": document["category"],
                     },
-                )
+            )
         self.memory_service.bootstrap()
         self._bootstrapped = True
 
@@ -241,29 +237,25 @@ class KnowledgePipeline:
             text=document["cleaned_text"],
             metadata={"title": document["title"], "category": document["category"]},
         )
-        for section in sections:
-            self.vector_store.add_section(
-                section_id=section["id"],
-                text=section["text"],
-                metadata={
+        self.vector_store.add_sections(
+            sections,
+            lambda section: {
                     "document_id": document_id,
                     "section_index": section["section_index"],
                     "heading": section["heading"],
                     "title": document["title"],
                     "category": document["category"],
                 },
-            )
-        for chunk in chunks:
-            self.vector_store.add_chunk(
-                chunk_id=chunk["id"],
-                text=chunk["text"],
-                metadata={
+        )
+        self.vector_store.add_chunks(
+            chunks,
+            lambda chunk: {
                     "document_id": document_id,
                     "chunk_index": chunk["chunk_index"],
                     "title": document["title"],
                     "category": document["category"],
                 },
-            )
+        )
 
         graph = self.graph_service.build_for_document(document=document, chunks=chunks)
         related = self._related_links_for_document(document)
