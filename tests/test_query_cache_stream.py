@@ -59,6 +59,30 @@ def test_pipeline_query_uses_rag_cache_and_streams_events(tmp_path):
     assert events[-1]["event"] == "done"
 
 
+def test_pipeline_query_fast_mode_skips_model_generation(tmp_path, monkeypatch):
+    settings, pipeline = build_pipeline(tmp_path)
+    pipeline.ingest(
+        IngestRequest(
+            source_type="text",
+            source="LangGraph 可以把采集、解析、摘要和问答节点编排成多 Agent 工作流。",
+            title="LangGraph 快速问答测试",
+        )
+    )
+    settings.openai_api_key = "test-key"
+
+    def fail_if_model_called(*_, **__):
+        raise AssertionError("fast mode should not call model")
+
+    monkeypatch.setattr(pipeline.openai_service, "generate_json", fail_if_model_called)
+    monkeypatch.setattr(pipeline.openai_service, "generate_text", fail_if_model_called)
+
+    result = pipeline.query("LangGraph 适合做什么？", top_k=2, answer_mode="fast")
+
+    assert result["answer"].startswith("我在知识库里找到")
+    assert result["references"]
+    assert any("快速模式已使用本地 RAG 摘要" in log for log in result["logs"])
+
+
 def test_pipeline_query_falls_back_when_model_generation_fails(tmp_path, monkeypatch):
     settings, pipeline = build_pipeline(tmp_path)
     pipeline.ingest(
@@ -77,7 +101,7 @@ def test_pipeline_query_falls_back_when_model_generation_fails(tmp_path, monkeyp
     monkeypatch.setattr(pipeline.openai_service, "generate_json", fail_model_call)
     monkeypatch.setattr(pipeline.openai_service, "generate_text", fail_model_call)
 
-    result = pipeline.query("LangGraph 适合做什么？", top_k=2)
+    result = pipeline.query("LangGraph 适合做什么？", top_k=2, answer_mode="model")
 
     assert result["answer"].startswith("我在知识库里找到")
     assert result["references"]

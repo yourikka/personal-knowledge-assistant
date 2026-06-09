@@ -194,7 +194,12 @@ async def upload_document(
 @app.post("/api/knowledge/query", response_model=QueryResponse)
 def query_knowledge(request: QueryRequest) -> QueryResponse:
     try:
-        result = pipeline.query(query=request.query, top_k=request.top_k, session_id=request.session_id)
+        result = pipeline.query(
+            query=request.query,
+            top_k=request.top_k,
+            session_id=request.session_id,
+            answer_mode=request.answer_mode,
+        )
         return QueryResponse(session_id=request.session_id, **result)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"检索失败：{error}") from error
@@ -208,6 +213,7 @@ def stream_query_knowledge(request: QueryRequest) -> StreamingResponse:
                 query=request.query,
                 top_k=request.top_k,
                 session_id=request.session_id,
+                answer_mode=request.answer_mode,
             ):
                 payload = json.dumps(item["data"], ensure_ascii=False)
                 yield f"event: {item['event']}\ndata: {payload}\n\n"

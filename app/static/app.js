@@ -1201,6 +1201,7 @@ async function handleQuery(event) {
     query,
     top_k: Number(formData.get("top_k") || 3),
     session_id: formData.get("session_id") || null,
+    answer_mode: formData.get("answer_mode") || "fast",
   };
   state.lastQuery = query;
   state.lastSessionId = request.session_id || "web-session";
@@ -1220,7 +1221,7 @@ async function handleQuery(event) {
   const isCurrentRun = () => state.queryRunId === runId;
 
   try {
-    els.answerContent.textContent = "正在检索...";
+    els.answerContent.textContent = request.answer_mode === "model" ? "正在检索并准备模型精答..." : "正在快速检索...";
     renderFeedbackBar(false);
     renderMemories([]);
     renderReferences([]);

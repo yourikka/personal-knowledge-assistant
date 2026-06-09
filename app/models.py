@@ -20,6 +20,7 @@ class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=3, ge=1, le=10)
     session_id: str | None = Field(default=None, min_length=1)
+    answer_mode: Literal["fast", "model"] = "fast"
 
 
 class DocumentClickRequest(BaseModel):

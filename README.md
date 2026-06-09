@@ -191,8 +191,10 @@ curl -X DELETE http://127.0.0.1:8010/api/memories/{memory_id}
 ```bash
 curl -N -X POST http://127.0.0.1:8010/api/knowledge/query/stream \
   -H "Content-Type: application/json" \
-  -d '{"query":"LangGraph 适合做什么？","top_k":3,"session_id":"web-session"}'
+  -d '{"query":"LangGraph 适合做什么？","top_k":3,"session_id":"web-session","answer_mode":"fast"}'
 ```
+
+`answer_mode` 默认是 `fast`，只做本地 RAG 检索、引用拼装和摘要回退，适合交互式快速回答。需要调用模型生成精答时传 `"answer_mode":"model"`，如果模型超时或失败会回退本地摘要。
 
 ### 查看文档切片
 
@@ -235,7 +237,8 @@ curl -X POST http://127.0.0.1:8010/api/knowledge/query \
   -d '{
     "query": "我收藏的内容里哪些和 Agent 编排有关？",
     "top_k": 3,
-    "session_id": "demo-session"
+    "session_id": "demo-session",
+    "answer_mode": "model"
   }'
 ```
 

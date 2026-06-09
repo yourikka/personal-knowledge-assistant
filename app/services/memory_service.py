@@ -78,11 +78,12 @@ class MemoryService:
         answer: str,
         session_id: str | None,
         references: list[dict[str, Any]],
+        use_model: bool = True,
     ) -> list[dict[str, Any]]:
         if not self.settings.memory_enabled or not session_id:
             return []
 
-        if self.openai_service.enabled():
+        if use_model and self.openai_service.enabled():
             learned = self._extract_with_model(query=query, answer=answer, session_id=session_id, references=references)
         else:
             learned = self._extract_with_rules(query=query, session_id=session_id)

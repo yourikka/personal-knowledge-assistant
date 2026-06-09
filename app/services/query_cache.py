@@ -15,9 +15,16 @@ class QueryCacheService:
         self.max_entries = max(1, settings.query_cache_max_entries)
         self._items: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
-    def make_key(self, query: str, top_k: int, session_id: str | None = None) -> str:
+    def make_key(
+        self,
+        query: str,
+        top_k: int,
+        session_id: str | None = None,
+        rewrite_enabled: bool = True,
+    ) -> str:
         normalized = " ".join(query.lower().split())
-        return f"{session_id or 'global'}:{top_k}:{normalized}"
+        rewrite_part = "rewrite" if rewrite_enabled else "direct"
+        return f"{session_id or 'global'}:{top_k}:{rewrite_part}:{normalized}"
 
     def get(self, key: str) -> dict[str, Any] | None:
         if not self.enabled:

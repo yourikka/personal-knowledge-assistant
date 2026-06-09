@@ -39,17 +39,23 @@ class RAGService:
         top_k: int,
         session_id: str | None = None,
         exclude_ids: set[str] | None = None,
+        rewrite_enabled: bool = True,
     ) -> dict[str, Any]:
         logs: list[str] = []
         cache_key = None
         if self.query_cache and not exclude_ids:
-            cache_key = self.query_cache.make_key(query=query, top_k=top_k, session_id=session_id)
+            cache_key = self.query_cache.make_key(
+                query=query,
+                top_k=top_k,
+                session_id=session_id,
+                rewrite_enabled=rewrite_enabled,
+            )
             cached = self.query_cache.get(cache_key)
             if cached:
                 cached["logs"] = ["cache: 命中高频 Query 缓存。", *cached.get("logs", [])]
                 return cached
 
-        expanded_queries = self.expand_query(query=query, session_id=session_id)
+        expanded_queries = self.expand_query(query=query, session_id=session_id, use_model=rewrite_enabled)
         logs.append(f"rag: 查询扩展 {len(expanded_queries)} 条。")
 
         candidate_limit = max(top_k * self.settings.rag_candidate_multiplier, top_k)
@@ -73,12 +79,12 @@ class RAGService:
             self.query_cache.set(cache_key, result)
         return result
 
-    def expand_query(self, query: str, session_id: str | None = None) -> list[str]:
+    def expand_query(self, query: str, session_id: str | None = None, use_model: bool = True) -> list[str]:
         queries = [query]
         history = self.repo.list_chat_turns(session_id, limit=4) if session_id else []
         history_text = "\n".join(f"{item['role']}: {item['content']}" for item in history[-4:])
 
-        if self.settings.rag_rewrite_enabled and self.openai_service.enabled():
+        if use_model and self.settings.rag_rewrite_enabled and self.openai_service.enabled():
             try:
                 result = self.openai_service.generate_json(
                     system_prompt=(

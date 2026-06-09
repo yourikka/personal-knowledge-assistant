@@ -191,6 +191,13 @@
                 <span>Top K</span>
                 <input type="number" name="top_k" min="1" max="10" value="3">
               </label>
+              <label>
+                <span>回答模式</span>
+                <select name="answer_mode">
+                  <option value="fast" selected>快速本地</option>
+                  <option value="model">模型精答</option>
+                </select>
+              </label>
               <button class="primary-action compact" type="submit">提问</button>
             </div>
           </form>

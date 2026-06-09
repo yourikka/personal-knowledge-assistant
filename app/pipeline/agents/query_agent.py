@@ -31,15 +31,27 @@ class QueryAgent:
         self.self_check = self_check
         self.personalization_service = personalization_service
 
-    def run(self, query: str, top_k: int, session_id: str | None = None) -> dict:
+    def run(
+        self,
+        query: str,
+        top_k: int,
+        session_id: str | None = None,
+        answer_mode: str = "fast",
+    ) -> dict:
         logs = ["query: 已开始执行 RAG 检索。"]
+        use_model = answer_mode == "model"
         history = self.repo.list_chat_turns(session_id) if session_id else []
         memories = self.memory_service.retrieve(query=query, session_id=session_id) if self.memory_service else []
         if self.memory_service:
             logs.append(f"memory: 已召回 {len(memories)} 条相关记忆。")
         if self.personalization_service:
             self.personalization_service.learn_query(session_id=session_id, query=query)
-        retrieval = self.rag_service.retrieve(query=query, top_k=top_k, session_id=session_id)
+        retrieval = self.rag_service.retrieve(
+            query=query,
+            top_k=top_k,
+            session_id=session_id,
+            rewrite_enabled=use_model,
+        )
         references = retrieval["references"]
         answer, answer_logs = self._compose_answer(
             query=query,
@@ -48,12 +60,18 @@ class QueryAgent:
             expanded_queries=retrieval["expanded_queries"],
             history=history,
             memories=memories,
+            use_model=use_model,
         )
         logs.extend(answer_logs)
-        if self.self_check:
+        if self.self_check and use_model:
             answer, check_logs = self.self_check.check_answer(answer, references)
             logs.extend(check_logs)
         logs.extend(retrieval["logs"])
+        logs.append(
+            "query: 快速模式已使用本地 RAG 摘要。"
+            if answer_mode == "fast"
+            else "query: 模型模式已完成生成或回退。"
+        )
         logs.append("query: 已完成 RAG 答案生成与引用拼装。")
 
         if session_id:
@@ -65,6 +83,7 @@ class QueryAgent:
                     answer=answer,
                     session_id=session_id,
                     references=references,
+                    use_model=use_model,
                 )
                 logs.append(f"memory: 已写入 {len(learned)} 条新记忆。")
 
@@ -78,14 +97,20 @@ class QueryAgent:
         expanded_queries: list[str],
         history: list[dict],
         memories: list[dict],
+        use_model: bool = True,
     ) -> tuple[str, list[str]]:
         logs: list[str] = []
         if not references:
             if memories:
-                return self._compose_memory_only_answer(query=query, memories=memories, history=history)
+                return self._compose_memory_only_answer(
+                    query=query,
+                    memories=memories,
+                    history=history,
+                    use_model=use_model,
+                )
             return f"当前知识库里没有找到和“{query}”足够相关的内容。建议先补充文档再检索。", logs
 
-        if self.openai_service.enabled():
+        if use_model and self.openai_service.enabled():
             history_text = "\n".join(f"{item['role']}: {item['content']}" for item in history[-4:])
             memory_context = self.memory_service.format_context(memories) if self.memory_service else "无"
             try:
@@ -136,9 +161,15 @@ class QueryAgent:
             )
         return lead + " " + " ".join(bullets), logs
 
-    def _compose_memory_only_answer(self, query: str, memories: list[dict], history: list[dict]) -> tuple[str, list[str]]:
+    def _compose_memory_only_answer(
+        self,
+        query: str,
+        memories: list[dict],
+        history: list[dict],
+        use_model: bool = True,
+    ) -> tuple[str, list[str]]:
         logs: list[str] = []
-        if self.openai_service.enabled() and self.memory_service:
+        if use_model and self.openai_service.enabled() and self.memory_service:
             history_text = "\n".join(f"{item['role']}: {item['content']}" for item in history[-4:])
             try:
                 answer = self.openai_service.generate_text(

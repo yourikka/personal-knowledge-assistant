@@ -166,13 +166,16 @@ class KnowledgePipeline:
             "logs": state.logs + ["orchestrator: 快速入库已完成，文档增强将在后台补齐。"],
         }
 
-    def query(self, query: str, top_k: int, session_id: str | None = None) -> dict:
-        return self.query_agent.run(query=query, top_k=top_k, session_id=session_id)
+    def query(self, query: str, top_k: int, session_id: str | None = None, answer_mode: str = "fast") -> dict:
+        return self.query_agent.run(query=query, top_k=top_k, session_id=session_id, answer_mode=answer_mode)
 
-    def query_stream(self, query: str, top_k: int, session_id: str | None = None):
+    def query_stream(self, query: str, top_k: int, session_id: str | None = None, answer_mode: str = "fast"):
         yield {"event": "status", "data": "正在检索知识库..."}
-        yield {"event": "status", "data": "正在调用模型生成答案，超时后会自动回退本地摘要..."}
-        result = self.query(query=query, top_k=top_k, session_id=session_id)
+        if answer_mode == "model":
+            yield {"event": "status", "data": "正在调用模型生成答案，超时后会自动回退本地摘要..."}
+        else:
+            yield {"event": "status", "data": "正在使用本地快速摘要拼装答案..."}
+        result = self.query(query=query, top_k=top_k, session_id=session_id, answer_mode=answer_mode)
         chunk_size = max(12, self.query_agent.settings.query_stream_chunk_chars)
         answer = result["answer"]
         for index in range(0, len(answer), chunk_size):
