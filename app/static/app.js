@@ -71,9 +71,10 @@ async function api(url, options = {}) {
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
-    const detail = typeof payload === "string" ? payload : payload.detail || JSON.stringify(payload);
+    const detail = extractErrorMessage(payload);
     const error = new Error(detail);
     error.status = response.status;
+    error.code = extractErrorCode(payload);
     throw error;
   }
   return payload;
@@ -88,7 +89,7 @@ async function streamApi(url, payload, handlers = {}, options = {}) {
   });
   if (!response.ok || !response.body) {
     const detail = await response.text();
-    throw new Error(detail || `HTTP ${response.status}`);
+    throw new Error(extractErrorMessage(parseMaybeJson(detail)) || `HTTP ${response.status}`);
   }
 
   const reader = response.body.getReader();
@@ -131,9 +132,53 @@ function dispatchStreamEvent(block, handlers) {
     payload = data;
   }
   if (event === "error") {
-    throw new Error(payload.error || "流式检索失败。");
+    const error = new Error(extractErrorMessage(payload) || "流式检索失败。");
+    error.code = extractErrorCode(payload);
+    throw error;
   }
   handlers[event]?.(payload);
+}
+
+function parseMaybeJson(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function unwrapApiError(payload) {
+  if (!payload || typeof payload === "string") {
+    return null;
+  }
+  if (payload.error && typeof payload.error === "object") {
+    return payload.error;
+  }
+  if (payload.detail?.error && typeof payload.detail.error === "object") {
+    return payload.detail.error;
+  }
+  return null;
+}
+
+function extractErrorMessage(payload) {
+  if (typeof payload === "string") {
+    return payload;
+  }
+  const apiError = unwrapApiError(payload);
+  if (apiError?.message) {
+    return apiError.message;
+  }
+  if (typeof payload?.detail === "string") {
+    return payload.detail;
+  }
+  return JSON.stringify(payload);
+}
+
+function extractErrorCode(payload) {
+  return unwrapApiError(payload)?.code || null;
 }
 
 function appendLogs(prefix, logs) {

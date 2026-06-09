@@ -6,10 +6,11 @@ import os
 from pathlib import Path
 import tempfile
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from .api_errors import api_error, error_payload, register_error_handlers
 from .config import get_settings
 from .db import KnowledgeRepository
 from .models import (
@@ -61,6 +62,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Personal Knowledge Assistant", version="0.1.0", lifespan=lifespan)
+register_error_handlers(app)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -97,11 +99,11 @@ def ingest_document(request: IngestRequest) -> IngestResponse:
             result["logs"].append("jobs: 已提交后台文档增强任务。")
         return IngestResponse(**result)
     except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        raise api_error(404, "ingest_source_not_found", str(error), retryable=False) from error
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise api_error(400, "invalid_ingest_request", str(error), retryable=False) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"入库失败：{error}") from error
+        raise api_error(500, "ingest_failed", f"入库失败：{error}", retryable=True) from error
 
 
 @app.post("/api/jobs/ingest", response_model=JobResponse)
@@ -109,9 +111,9 @@ def submit_ingest_job(request: AsyncIngestRequest) -> JobResponse:
     try:
         return JobResponse(**job_service.submit_ingest(request.request, request.idempotency_key))
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise api_error(400, "invalid_job_request", str(error), retryable=False) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"提交任务失败：{error}") from error
+        raise api_error(500, "job_submit_failed", f"提交任务失败：{error}", retryable=True) from error
 
 
 @app.post("/api/jobs/reindex", response_model=JobResponse)
@@ -119,17 +121,17 @@ def submit_reindex_job() -> JobResponse:
     try:
         return JobResponse(**job_service.submit_reindex(idempotency_key=None))
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"提交重建任务失败：{error}") from error
+        raise api_error(500, "reindex_job_submit_failed", f"提交重建任务失败：{error}", retryable=True) from error
 
 
 @app.post("/api/jobs/documents/{document_id}/enrich", response_model=JobResponse)
 def submit_document_enrich_job(document_id: str) -> JobResponse:
     if not repo.get_document(document_id):
-        raise HTTPException(status_code=404, detail="文档不存在。")
+        raise api_error(404, "document_not_found", "文档不存在。", retryable=False)
     try:
         return JobResponse(**job_service.submit_enrich(document_id, idempotency_key=f"enrich-{document_id}"))
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"提交文档增强任务失败：{error}") from error
+        raise api_error(500, "enrich_job_submit_failed", f"提交文档增强任务失败：{error}", retryable=True) from error
 
 
 @app.get("/api/jobs", response_model=list[JobResponse])
@@ -142,7 +144,7 @@ def get_job(job_id: str) -> JobResponse:
     try:
         return JobResponse(**job_service.get_job(job_id))
     except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        raise api_error(404, "job_not_found", str(error), retryable=False) from error
 
 
 @app.post("/api/jobs/{job_id}/cancel", response_model=JobResponse)
@@ -150,7 +152,7 @@ def cancel_job(job_id: str) -> JobResponse:
     try:
         return JobResponse(**job_service.cancel(job_id))
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise api_error(400, "job_cancel_failed", str(error), retryable=False) from error
 
 
 @app.post("/api/jobs/{job_id}/retry", response_model=JobResponse)
@@ -158,7 +160,7 @@ def retry_job(job_id: str) -> JobResponse:
     try:
         return JobResponse(**job_service.retry(job_id))
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise api_error(400, "job_retry_failed", str(error), retryable=False) from error
 
 
 @app.post("/api/knowledge/upload", response_model=IngestResponse)
@@ -186,9 +188,9 @@ async def upload_document(
                 os.unlink(temp_path)
         return IngestResponse(**result)
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise api_error(400, "invalid_upload_request", str(error), retryable=False) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"上传入库失败：{error}") from error
+        raise api_error(500, "upload_ingest_failed", f"上传入库失败：{error}", retryable=True) from error
 
 
 @app.post("/api/knowledge/query", response_model=QueryResponse)
@@ -202,7 +204,7 @@ def query_knowledge(request: QueryRequest) -> QueryResponse:
         )
         return QueryResponse(session_id=request.session_id, **result)
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"检索失败：{error}") from error
+        raise api_error(500, "query_failed", f"检索失败：{error}", retryable=True) from error
 
 
 @app.post("/api/knowledge/query/stream")
@@ -218,7 +220,7 @@ def stream_query_knowledge(request: QueryRequest) -> StreamingResponse:
                 payload = json.dumps(item["data"], ensure_ascii=False)
                 yield f"event: {item['event']}\ndata: {payload}\n\n"
         except Exception as error:
-            payload = json.dumps({"error": f"流式检索失败：{error}"}, ensure_ascii=False)
+            payload = json.dumps(error_payload("query_stream_failed", f"流式检索失败：{error}", retryable=True), ensure_ascii=False)
             yield f"event: error\ndata: {payload}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -227,7 +229,7 @@ def stream_query_knowledge(request: QueryRequest) -> StreamingResponse:
 @app.post("/api/personalization/clicks", response_model=PersonalizationEventResponse)
 def record_document_click(request: DocumentClickRequest) -> PersonalizationEventResponse:
     if not repo.get_document(request.document_id):
-        raise HTTPException(status_code=404, detail="文档不存在。")
+        raise api_error(404, "document_not_found", "文档不存在。", retryable=False)
     pipeline.personalization_service.record_click(
         session_id=request.session_id,
         document_id=request.document_id,
@@ -239,7 +241,7 @@ def record_document_click(request: DocumentClickRequest) -> PersonalizationEvent
 @app.post("/api/personalization/feedback", response_model=PersonalizationEventResponse)
 def record_query_feedback(request: QueryFeedbackRequest) -> PersonalizationEventResponse:
     if request.document_id and not repo.get_document(request.document_id):
-        raise HTTPException(status_code=404, detail="文档不存在。")
+        raise api_error(404, "document_not_found", "文档不存在。", retryable=False)
     pipeline.personalization_service.record_feedback(
         session_id=request.session_id,
         query=request.query,
@@ -262,7 +264,7 @@ def update_memory(memory_id: str, request: MemoryUpdateRequest) -> MemoryRespons
     if request.content is not None:
         content = request.content.strip()
         if not content:
-            raise HTTPException(status_code=400, detail="记忆内容不能为空。")
+            raise api_error(400, "invalid_memory_content", "记忆内容不能为空。", retryable=False)
     tags = None
     if request.tags is not None:
         tags = [tag.strip() for tag in request.tags if tag.strip()][:5]
@@ -273,7 +275,7 @@ def update_memory(memory_id: str, request: MemoryUpdateRequest) -> MemoryRespons
         tags=tags,
     )
     if not updated:
-        raise HTTPException(status_code=404, detail="记忆不存在。")
+        raise api_error(404, "memory_not_found", "记忆不存在。", retryable=False)
     vector_store.add_memory(
         memory_id=updated["id"],
         text=updated["content"],
@@ -291,7 +293,7 @@ def update_memory(memory_id: str, request: MemoryUpdateRequest) -> MemoryRespons
 @app.delete("/api/memories/{memory_id}", response_model=DeleteMemoryResponse)
 def delete_memory(memory_id: str) -> DeleteMemoryResponse:
     if not repo.delete_memory(memory_id):
-        raise HTTPException(status_code=404, detail="记忆不存在。")
+        raise api_error(404, "memory_not_found", "记忆不存在。", retryable=False)
     vector_store.delete_ids([memory_id])
     return DeleteMemoryResponse(status="ok", memory_id=memory_id)
 
@@ -306,21 +308,21 @@ def list_documents(limit: int = 20) -> list[DocumentResponse]:
 def get_document(document_id: str) -> DocumentDetailResponse:
     document = repo.get_document(document_id)
     if not document:
-        raise HTTPException(status_code=404, detail="文档不存在。")
+        raise api_error(404, "document_not_found", "文档不存在。", retryable=False)
     return DocumentDetailResponse(**document, related=repo.list_links(document_id))
 
 
 @app.get("/api/knowledge/documents/{document_id}/chunks", response_model=list[DocumentChunkResponse])
 def list_document_chunks(document_id: str) -> list[DocumentChunkResponse]:
     if not repo.get_document(document_id):
-        raise HTTPException(status_code=404, detail="文档不存在。")
+        raise api_error(404, "document_not_found", "文档不存在。", retryable=False)
     return [DocumentChunkResponse(**chunk) for chunk in repo.list_document_chunks(document_id)]
 
 
 @app.get("/api/knowledge/documents/{document_id}/graph", response_model=DocumentGraphResponse)
 def get_document_graph(document_id: str) -> DocumentGraphResponse:
     if not repo.get_document(document_id):
-        raise HTTPException(status_code=404, detail="文档不存在。")
+        raise api_error(404, "document_not_found", "文档不存在。", retryable=False)
     graph = pipeline.graph_service.graph_view(document_id)
     return DocumentGraphResponse(document_id=document_id, **graph)
 
@@ -330,9 +332,9 @@ def delete_document_response(document_id: str) -> DeleteDocumentResponse:
         result = pipeline.delete_document(document_id)
         return DeleteDocumentResponse(**result)
     except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        raise api_error(404, "document_not_found", str(error), retryable=False) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"删除文档失败：{error}") from error
+        raise api_error(500, "document_delete_failed", f"删除文档失败：{error}", retryable=True) from error
 
 
 @app.delete("/api/knowledge/documents/{document_id}", response_model=DeleteDocumentResponse)
@@ -351,7 +353,7 @@ def rebuild_index_and_links() -> ReindexResponse:
         result = pipeline.rebuild_links()
         return ReindexResponse(**result)
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"重建索引失败：{error}") from error
+        raise api_error(500, "reindex_failed", f"重建索引失败：{error}", retryable=True) from error
 
 
 @app.post("/api/knowledge/documents/{document_id}/reindex", response_model=ReindexDocumentResponse)
@@ -360,9 +362,9 @@ def reindex_document(document_id: str) -> ReindexDocumentResponse:
         result = pipeline.reindex_document(document_id)
         return ReindexDocumentResponse(**result)
     except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        raise api_error(404, "document_not_found", str(error), retryable=False) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"重建文档索引失败：{error}") from error
+        raise api_error(500, "document_reindex_failed", f"重建文档索引失败：{error}", retryable=True) from error
 
 
 @app.post("/api/images/generate", response_model=ImageGenerateResponse)
@@ -371,4 +373,4 @@ def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse:
         result = pipeline.generate_image(prompt=request.prompt, size=request.size, quality=request.quality)
         return ImageGenerateResponse(**result)
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"生图失败：{error}") from error
+        raise api_error(500, "image_generation_failed", f"生图失败：{error}", retryable=True) from error

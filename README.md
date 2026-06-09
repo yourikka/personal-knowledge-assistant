@@ -254,6 +254,20 @@ curl -X POST http://127.0.0.1:8010/api/images/generate \
   }'
 ```
 
+### 错误响应
+
+所有 API 错误返回统一结构，前端和脚本不要再解析自然语言字符串：
+
+```json
+{
+  "error": {
+    "code": "document_not_found",
+    "message": "文档不存在。",
+    "retryable": false
+  }
+}
+```
+
 ## Agent 对应职责
 
 1. 数据采集 Agent：读取 URL、本地文件或内联文本，做黑名单校验和去重。
