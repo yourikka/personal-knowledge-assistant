@@ -152,8 +152,10 @@
 ```text
 agent_acquisition
   ├─ duplicate -> END
-  └─ parse -> agent_parser -> agent_cleaning -> agent_chunking -> agent_classification -> agent_summary -> persist -> agent_linking -> END
+  └─ parse -> agent_parser -> agent_cleaning -> agent_chunking -> agent_metadata -> persist -> agent_graph -> agent_linking -> END
 ```
+
+同步入库接口默认使用快速入库图，只执行到 `persist`；模型元数据、向量索引、图谱和链接由后台增强任务补齐。
 
 ### 4.3 当前问答链路
 
@@ -162,7 +164,7 @@ agent_acquisition
 -> QueryAgent
 -> MemoryService.retrieve
 -> RAGService.retrieve
--> LLM 组合回答
+-> fast 本地摘要或 model 模型精答
 -> 保存 chat_turns
 -> MemoryService.learn_from_turn
 ```

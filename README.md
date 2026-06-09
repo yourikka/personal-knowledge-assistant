@@ -274,10 +274,10 @@ curl -X POST http://127.0.0.1:8010/api/images/generate \
 2. 格式解析 Agent：按 HTML、PDF、Markdown、图片等格式提纯文本并提取元数据。
 3. 内容清洗 Agent：去脚本、去广告噪声、修正常见乱码、统一空白格式。
 4. 文章切块 Agent：按标题、段落、句子边界生成 chunk，保存字符范围和标题路径。
-5. 分类打标 Agent：按技术、生活、学习三大主题分类，并产出 3 到 5 个标签。
-6. 摘要提取 Agent：抽取核心句，生成 100 到 200 字摘要。
-7. 知识关联 Agent：计算相似度，建立双向链接。
-8. 检索问答 Agent：支持自然语言检索，返回摘要、chunk 引用和来源。
+5. 元数据 Agent：一次性产出分类、标签和摘要；模型不可用时回退本地规则。
+6. 知识图谱 Agent：抽取人物、技术、组织、概念实体，并建立启发式关系。
+7. 知识关联 Agent：复用 RAG 召回结果建立双向链接。
+8. 检索问答 Agent：支持快速本地回答和模型精答，返回 chunk 引用和来源。
 9. 生图 Agent：按知识主题或检索结果生成配图、封面或概念图。
 
 ## LangGraph 编排
@@ -287,10 +287,10 @@ curl -X POST http://127.0.0.1:8010/api/images/generate \
 ```text
 agent_acquisition
   ├─ duplicate -> END
-  └─ parse -> agent_parser -> agent_cleaning -> agent_chunking -> agent_classification -> agent_summary -> persist -> agent_graph -> agent_linking -> END
+  └─ parse -> agent_parser -> agent_cleaning -> agent_chunking -> agent_metadata -> persist -> agent_graph -> agent_linking -> END
 ```
 
-节点之间传递 `PipelineState`，重复文档会在采集节点后通过条件边直接结束，不会重复解析、摘要或写库。
+节点之间传递 `PipelineState`，重复文档会在采集节点后通过条件边直接结束，不会重复解析、元数据生成或写库。同步 API 默认走快速入库图，只执行到 `persist`，图谱、向量索引和链接由后台增强任务补齐。
 
 ## RAG 策略
 
