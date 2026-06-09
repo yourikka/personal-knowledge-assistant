@@ -150,6 +150,14 @@ curl -X POST http://127.0.0.1:8010/api/jobs/reindex
 
 说明：该接口会创建后台任务，适合在批量入库、关联策略调整或索引修复后重建全库文档关联。同步兼容接口仍保留为 `POST /api/knowledge/reindex`。
 
+### 后台单文档增强补齐
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/jobs/documents/{document_id}/enrich
+```
+
+说明：该接口会创建后台任务，为指定文档补齐向量索引、实体关系图谱和相似文档关联。
+
 ### 单文档增量索引
 
 ```bash

@@ -168,19 +168,18 @@ class KnowledgePipeline:
         self.query_cache.clear()
         return {"status": "ok", "documents": len(self.repo.iter_documents()), "links_rebuilt": rebuilt}
 
-    def reindex_document(self, document_id: str) -> dict:
+    def enrich_document(self, document_id: str) -> dict:
         document = self.repo.get_document(document_id)
         if not document:
             raise ValueError("文档不存在。")
-
-        old_chunk_ids = [chunk["id"] for chunk in self.repo.list_document_chunks(document_id)]
-        old_section_ids = [section["id"] for section in self.repo.list_document_sections(document_id)]
-        chunks = self.chunker.chunk(document_id=document_id, text=document["cleaned_text"])
-        sections = self.chunker.sections_from_chunks(document_id=document_id, chunks=chunks)
-
-        self.vector_store.delete_ids([document_id, *old_section_ids, *old_chunk_ids])
-        self.repo.replace_document_chunks(document_id, chunks)
-        self.repo.replace_document_sections(document_id, sections)
+        chunks = self.repo.list_document_chunks(document_id)
+        sections = self.repo.list_document_sections(document_id)
+        if not chunks:
+            chunks = self.chunker.chunk(document_id=document_id, text=document["cleaned_text"])
+            self.repo.replace_document_chunks(document_id, chunks)
+        if not sections:
+            sections = self.chunker.sections_from_chunks(document_id=document_id, chunks=chunks)
+            self.repo.replace_document_sections(document_id, sections)
 
         self.vector_store.add_document(
             document_id=document_id,
@@ -224,6 +223,22 @@ class KnowledgePipeline:
             "graph_nodes": len(graph["entities"]),
             "graph_edges": len(graph["edges"]),
         }
+
+    def reindex_document(self, document_id: str) -> dict:
+        document = self.repo.get_document(document_id)
+        if not document:
+            raise ValueError("文档不存在。")
+
+        old_chunk_ids = [chunk["id"] for chunk in self.repo.list_document_chunks(document_id)]
+        old_section_ids = [section["id"] for section in self.repo.list_document_sections(document_id)]
+        chunks = self.chunker.chunk(document_id=document_id, text=document["cleaned_text"])
+        sections = self.chunker.sections_from_chunks(document_id=document_id, chunks=chunks)
+
+        self.vector_store.delete_ids([document_id, *old_section_ids, *old_chunk_ids])
+        self.repo.replace_document_chunks(document_id, chunks)
+        self.repo.replace_document_sections(document_id, sections)
+
+        return self.enrich_document(document_id)
 
     def delete_document(self, document_id: str) -> dict:
         document = self.repo.get_document(document_id)

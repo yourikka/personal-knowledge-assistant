@@ -119,6 +119,16 @@ def submit_reindex_job() -> JobResponse:
         raise HTTPException(status_code=500, detail=f"提交重建任务失败：{error}") from error
 
 
+@app.post("/api/jobs/documents/{document_id}/enrich", response_model=JobResponse)
+def submit_document_enrich_job(document_id: str) -> JobResponse:
+    if not repo.get_document(document_id):
+        raise HTTPException(status_code=404, detail="文档不存在。")
+    try:
+        return JobResponse(**job_service.submit_enrich(document_id, idempotency_key=f"enrich-{document_id}"))
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"提交文档增强任务失败：{error}") from error
+
+
 @app.get("/api/jobs", response_model=list[JobResponse])
 def list_jobs(limit: int = 20) -> list[JobResponse]:
     return [JobResponse(**job) for job in job_service.list_jobs(limit=limit)]

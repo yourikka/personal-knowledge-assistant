@@ -101,6 +101,28 @@ def test_job_service_runs_reindex_in_background(tmp_path):
         service.shutdown()
 
 
+def test_job_service_runs_document_enrichment_in_background(tmp_path):
+    repo, service = build_job_service(tmp_path)
+    try:
+        ingest = service.submit_ingest(
+            IngestRequest(source_type="text", source="技术：LangGraph\nLangGraph 多 Agent 编排", title="Job Enrich")
+        )
+        ingested = wait_for_terminal(service, ingest["id"])
+        document_id = ingested["result"]["document_id"]
+        repo.replace_links(document_id, [])
+        repo.replace_document_graph(document_id, [], [])
+
+        enrich = service.submit_enrich(document_id)
+        finished = wait_for_terminal(service, enrich["id"])
+
+        assert finished["status"] == "succeeded"
+        assert finished["job_type"] == "enrich"
+        assert finished["result"]["document_id"] == document_id
+        assert repo.list_document_entities(document_id)
+    finally:
+        service.shutdown()
+
+
 def test_job_service_retries_failed_job(tmp_path):
     _, service = build_job_service(tmp_path)
     try:

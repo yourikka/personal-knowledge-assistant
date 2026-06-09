@@ -95,3 +95,23 @@ def test_rebuild_links_refreshes_all_document_links(tmp_path):
     assert result["documents"] == 2
     assert result["links_rebuilt"] > 0
     assert repo.list_links(first["document_id"]) or repo.list_links(second["document_id"])
+
+
+def test_enrich_document_rebuilds_graph_and_links(tmp_path):
+    repo, _, pipeline = build_pipeline(tmp_path)
+    first = pipeline.ingest(
+        IngestRequest(source_type="text", source="技术：LangGraph\nLangGraph 用于多 Agent 编排。", title="Enrich A")
+    )
+    pipeline.ingest(
+        IngestRequest(source_type="text", source="技术：LangGraph\nLangGraph 支持流程节点编排。", title="Enrich B")
+    )
+    repo.replace_links(first["document_id"], [])
+    repo.replace_document_graph(first["document_id"], [], [])
+
+    result = pipeline.enrich_document(first["document_id"])
+
+    assert result["status"] == "ok"
+    assert result["document_id"] == first["document_id"]
+    assert result["graph_nodes"] > 0
+    assert repo.list_document_entities(first["document_id"])
+    assert repo.list_links(first["document_id"])

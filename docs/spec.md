@@ -503,6 +503,7 @@ agent_acquisition
 - `POST /api/knowledge/ingest`
 - `POST /api/knowledge/upload`
 - `POST /api/knowledge/query`
+- `POST /api/jobs/documents/{document_id}/enrich`
 - `GET /api/knowledge/documents`
 - `GET /api/knowledge/documents/{document_id}`
 - `GET /api/knowledge/documents/{document_id}/chunks`

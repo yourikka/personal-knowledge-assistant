@@ -988,6 +988,9 @@ function jobTitle(job) {
   if (job.job_type === "reindex") {
     return "全库关联重建";
   }
+  if (job.job_type === "enrich") {
+    return "文档增强补齐";
+  }
   return payload.title || payload.source_type || job.id;
 }
 

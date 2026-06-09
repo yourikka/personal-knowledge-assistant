@@ -44,6 +44,19 @@ class JobService:
             self._schedule(job["id"])
         return self.get_job(job["id"])
 
+    def submit_enrich(self, document_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
+        job = self.repo.create_job(
+            job_id=f"job-{uuid.uuid4().hex[:24]}",
+            job_type="enrich",
+            payload={"document_id": document_id},
+            idempotency_key=idempotency_key,
+        )
+        if not self.repo.list_job_events(job["id"]):
+            self.repo.add_job_event(job["id"], "queued", "文档增强任务已进入队列。", {"document_id": document_id})
+        if job["status"] == "queued":
+            self._schedule(job["id"])
+        return self.get_job(job["id"])
+
     def get_job(self, job_id: str) -> dict[str, Any]:
         job = self.repo.get_job(job_id)
         if not job:
@@ -99,6 +112,8 @@ class JobService:
                 result = self.pipeline.ingest(request)
             elif job["job_type"] == "reindex":
                 result = self.pipeline.rebuild_links()
+            elif job["job_type"] == "enrich":
+                result = self.pipeline.enrich_document(str(job["payload"]["document_id"]))
             else:
                 raise ValueError(f"不支持的任务类型：{job['job_type']}")
             self.repo.complete_job(job_id, result)
